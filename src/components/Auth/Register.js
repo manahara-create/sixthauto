@@ -9,42 +9,18 @@ const { Option } = Select;
 
 const Register = () => {
   const [loading, setLoading] = useState(false);
-  const [departments, setDepartments] = useState([]);
   const [emailError, setEmailError] = useState('');
   const navigate = useNavigate();
   const [form] = Form.useForm();
 
-  // Available roles
+  // Available roles (Admin removed - must be created manually)
   const availableRoles = [
     { value: 'employee', label: 'Employee' },
     { value: 'manager', label: 'Manager' },
     { value: 'hr', label: 'HR' },
     { value: 'ceo', label: 'CEO' },
     { value: 'accountant', label: 'Accountant' },
-    { value: 'admin', label: 'Admin' },
   ];
-
-  useEffect(() => {
-    fetchDepartments();
-  }, []);
-
-  const fetchDepartments = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('department')  // Changed from 'departments' to 'department'
-        .select('departmentid, departmentname')
-        .order('departmentname');
-
-      if (error) {
-        console.error('Error fetching departments:', error);
-        message.warning('Departments loading slowly. You can still register.');
-      } else {
-        setDepartments(data || []);
-      }
-    } catch (error) {
-      console.error('Failed to fetch departments:', error);
-    }
-  };
 
   // Email validation regex
   const validateEmail = (email) => {
@@ -58,6 +34,154 @@ const Register = () => {
       return 'Password must be at least 6 characters long';
     }
     return null;
+  };
+
+  // Helper function for default leave days
+  const getDefaultLeaveDays = (leaveType) => {
+    const defaults = {
+      'sick': 14,
+      'annual': 21,
+      'half-day': 5,
+      'maternity': 84,
+      'short': 7
+    };
+    return defaults[leaveType?.toLowerCase()] || 0;
+  };
+
+  // Create initial records in related tables
+  const createInitialEmployeeRecords = async (userId, role) => {
+    try {
+      // 1. Create default leave balances in leavebalance table
+      const { data: leaveTypes, error: leaveError } = await supabase
+        .from('leavetype')
+        .select('leavetypeid, leavetype');
+
+      if (leaveTypes && !leaveError) {
+        const currentYear = new Date().getFullYear();
+        const leaveBalanceData = leaveTypes.map(leaveType => ({
+          empid: userId,
+          leavetypeid: leaveType.leavetypeid,
+          year: currentYear,
+          days: getDefaultLeaveDays(leaveType.leavetype),
+          created_at: new Date().toISOString()
+        }));
+        
+        await supabase.from('leavebalance').insert(leaveBalanceData);
+      }
+
+      // 2. Create initial audit log entry
+      await supabase.from('audit_logs').insert({
+        user_id: userId,
+        action: 'USER_REGISTRATION',
+        table_name: 'employee',
+        record_id: userId,
+        new_values: { role, status: 'active' },
+        created_at: new Date().toISOString(),
+        ip_address: await getClientIP(),
+        user_agent: navigator.userAgent
+      });
+
+      console.log('Initial employee records created successfully');
+
+    } catch (error) {
+      console.warn('Initial records creation warning:', error);
+      // Non-critical error, don't block registration
+    }
+  };
+
+  // Get client IP (simplified version)
+  const getClientIP = async () => {
+    try {
+      const response = await fetch('https://api.ipify.org?format=json');
+      const data = await response.json();
+      return data.ip;
+    } catch (error) {
+      return 'unknown';
+    }
+  };
+
+  // Role assignment validation
+  const validateRoleAssignment = (role) => {
+    const restrictedRoles = ['ceo', 'hr'];
+    if (restrictedRoles.includes(role)) {
+      console.warn(`Restricted role ${role} assigned during registration - requires admin review`);
+      // You can add additional validation or notifications here
+    }
+    return true;
+  };
+
+  // Create employee profile in employee table
+  const createEmployeeProfile = async (user, values) => {
+    try {
+      // Split full name into first and last name
+      const nameParts = values.full_name.trim().split(' ');
+      const first_name = nameParts[0] || '';
+      const last_name = nameParts.slice(1).join(' ') || '';
+
+      // Validate role assignment
+      validateRoleAssignment(values.role);
+
+      const employeeData = {
+        email: values.email.toLowerCase(),
+        first_name: first_name,
+        last_name: last_name,
+        role: values.role,
+        status: 'active',
+        auth_user_id: user.id,
+        created_at: new Date().toISOString(),
+        is_active: true,
+        satisfaction_score: 0,
+        // Initialize default leave balances
+        sickleavebalance: 14,
+        fulldayleavebalance: 21,
+        halfdayleavebalance: 5,
+        shortleavebalance: 7,
+        maternityleavebalance: 0, // Only applicable when needed
+      };
+
+      const { data: employeeInsert, error: employeeError } = await supabase
+        .from('employee')
+        .insert([employeeData])
+        .select() // Return the inserted data
+        .single();
+
+      if (employeeError) {
+        console.error('Employee creation error:', employeeError);
+        
+        // If employee creation fails due to duplicate email, try update
+        if (employeeError.code === '23505') { // Unique violation
+          const { error: updateError } = await supabase
+            .from('employee')
+            .update({
+              first_name: first_name,
+              last_name: last_name,
+              role: values.role,
+              status: 'active',
+              auth_user_id: user.id,
+              is_active: true,
+              updated_at: new Date().toISOString()
+            })
+            .eq('email', values.email.toLowerCase());
+
+          if (updateError) {
+            console.error('Employee update also failed:', updateError);
+            throw new Error('Account created but employee profile setup incomplete. Please contact support.');
+          }
+        } else {
+          throw employeeError;
+        }
+      }
+
+      // Create initial records in other tables
+      await createInitialEmployeeRecords(employeeInsert?.empid || user.id, values.role);
+
+      console.log('Employee profile created/updated successfully');
+      return employeeInsert;
+
+    } catch (error) {
+      console.error('Unexpected error in employee creation:', error);
+      throw error;
+    }
   };
 
   const onFinish = async (values) => {
@@ -89,7 +213,7 @@ const Register = () => {
           data: {
             full_name: values.full_name,
             role: values.role,
-            department_id: values.department_id
+            email_confirm: true // Bypass email verification
           }
         }
       });
@@ -116,25 +240,25 @@ const Register = () => {
       // Create employee profile in your employee table
       if (authData.user) {
         await createEmployeeProfile(authData.user, values);
-      }
 
-      // Success message based on email confirmation status
-      if (authData.user && !authData.user.email_confirmed_at) {
-        message.success(
-          <span>
-            Account created successfully! 🎉<br />
-            Please check your email for verification link.
-          </span>,
-          8
-        );
-      } else {
-        message.success('Account created successfully! You can now log in.', 5);
+        // Auto-login after successful registration
+        const { error: signInError } = await supabase.auth.signInWithPassword({
+          email: values.email.trim().toLowerCase(),
+          password: values.password
+        });
+
+        if (signInError) {
+          console.warn('Auto-login failed:', signInError);
+          message.success('Account created successfully! Please log in.', 5);
+          navigate('/login');
+        } else {
+          message.success('Account created successfully! Redirecting to dashboard...', 3);
+          // Redirect to dashboard immediately
+          setTimeout(() => {
+            navigate('/dashboard');
+          }, 2000);
+        }
       }
-      
-      // Redirect to login after delay
-      setTimeout(() => {
-        navigate('/login');
-      }, 3000);
 
     } catch (error) {
       console.error('Registration error:', error);
@@ -150,63 +274,6 @@ const Register = () => {
       message.error(errorMessage);
     } finally {
       setLoading(false);
-    }
-  };
-
-  // Create employee profile in your employee table
-  const createEmployeeProfile = async (user, values) => {
-    try {
-      // Split full name into first and last name
-      const nameParts = values.full_name.split(' ');
-      const first_name = nameParts[0] || '';
-      const last_name = nameParts.slice(1).join(' ') || '';
-
-      // Get department name
-      const departmentName = departments.find(dept => dept.departmentid === values.department_id)?.departmentname || '';
-
-      const { error: employeeError } = await supabase
-        .from('employee')
-        .insert([
-          {
-            email: values.email.toLowerCase(),
-            first_name: first_name,
-            last_name: last_name,
-            role: values.role,
-            department: departmentName,
-            status: 'active',
-            auth_user_id: user.id, // Link to Supabase auth user
-            created_at: new Date().toISOString(),
-          },
-        ]);
-
-      if (employeeError) {
-        console.error('Employee creation error:', employeeError);
-        
-        // If employee creation fails, try to update existing employee
-        const { error: updateError } = await supabase
-          .from('employee')
-          .update({
-            first_name: first_name,
-            last_name: last_name,
-            role: values.role,
-            department: departmentName,
-            status: 'active',
-            auth_user_id: user.id,
-          })
-          .eq('email', values.email);
-
-        if (updateError) {
-          console.error('Employee update also failed:', updateError);
-          message.warning('Account created but employee profile setup incomplete. Please contact support.');
-        } else {
-          message.info('Employee profile updated successfully.');
-        }
-      } else {
-        console.log('Employee profile created successfully');
-      }
-    } catch (employeeError) {
-      console.error('Unexpected error in employee creation:', employeeError);
-      message.warning('Account created but there was an issue with employee profile setup.');
     }
   };
 
@@ -282,20 +349,17 @@ const Register = () => {
           </Text>
         </div>
 
-        {/* Email Error Alert */}
-        {emailError && (
-          <Alert
-            message="Email Service Notice"
-            description={emailError}
-            type="warning"
-            showIcon
-            icon={<InfoCircleOutlined />}
-            style={{ marginBottom: 24 }}
-            closable
-          />
-        )}
+        {/* Registration Notice */}
+        <Alert
+          message="Registration Notice"
+          description="Admin accounts cannot be created through this page. All other roles are available for self-registration."
+          type="info"
+          showIcon
+          icon={<InfoCircleOutlined />}
+          style={{ marginBottom: 24 }}
+          closable
+        />
 
-        {/* AIPL Logo Section */}
         <div style={{
           textAlign: 'center',
           marginBottom: 28,
@@ -313,16 +377,14 @@ const Register = () => {
           }}>
             EMS For
           </Text>
-          <Image
-            src="/images/aipl.png"
-            alt="Sixth Automotive"
-            preview={false}
-            style={{
-              height: '40px',
-              width: 'auto',
-              objectFit: 'contain'
-            }}
-          />
+          <Text strong style={{ 
+            display: 'block', 
+            marginBottom: 8,
+            fontSize: '20px',
+            color: '#2c3e50'
+          }}>
+            Sixth Gear Automotive Pvt Ltd
+          </Text>
         </div>
 
         <Divider style={{ 
@@ -344,7 +406,7 @@ const Register = () => {
           autoComplete="off"
           layout="vertical"
           initialValues={{
-            role: 'User'
+            role: 'employee' // Default to employee
           }}
         >
           <Form.Item
@@ -352,7 +414,8 @@ const Register = () => {
             label={<Text style={{ color: '#2c3e50', fontWeight: '600', fontSize: '14px' }}>Full Name</Text>}
             rules={[{ 
               required: true, 
-              message: 'Please input your full name!' 
+              message: 'Please input your full name!',
+              whitespace: true
             }]}
             hasFeedback
           >
@@ -400,39 +463,6 @@ const Register = () => {
           </Form.Item>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-            <Form.Item
-              name="department_id"
-              label={<Text style={{ color: '#2c3e50', fontWeight: '600', fontSize: '14px' }}>Department</Text>}
-              rules={[{ 
-                required: true, 
-                message: 'Please select your department!' 
-              }]}
-            >
-              <Select 
-                placeholder="Select department" 
-                size="large"
-                suffixIcon={<TeamOutlined style={{ color: '#3498db' }} />}
-                showSearch
-                filterOption={(input, option) =>
-                  option.children.toLowerCase().indexOf(input.toLowerCase()) >= 0
-                }
-                style={{
-                  borderRadius: '8px'
-                }}
-                notFoundContent={
-                  <div style={{ padding: '10px', textAlign: 'center', color: '#999' }}>
-                    No departments found
-                  </div>
-                }
-              >
-                {departments.map(dept => (
-                  <Option key={dept.departmentid} value={dept.departmentid}>
-                    {dept.departmentname}
-                  </Option>
-                ))}
-              </Select>
-            </Form.Item>
-
             <Form.Item
               name="role"
               label={<Text style={{ color: '#2c3e50', fontWeight: '600', fontSize: '14px' }}>Role</Text>}

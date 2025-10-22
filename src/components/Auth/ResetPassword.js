@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Form, Input, Button, Card, message, Typography, Image, Spin, Alert, Divider } from 'antd';
-import { LockOutlined, SafetyOutlined, InfoCircleOutlined, EyeInvisibleOutlined, EyeTwoTone, ArrowLeftOutlined } from '@ant-design/icons';
+import { LockOutlined, SafetyOutlined, InfoCircleOutlined, EyeInvisibleOutlined, EyeTwoTone, ArrowLeftOutlined, MailOutlined } from '@ant-design/icons';
 import { supabase } from '../../services/supabase';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 
 const { Title, Text } = Typography;
 
@@ -12,8 +12,10 @@ const ResetPassword = () => {
   const [sessionLoading, setSessionLoading] = useState(true);
   const [sessionError, setSessionError] = useState('');
   const [passwordError, setPasswordError] = useState('');
+  const [userEmail, setUserEmail] = useState('');
   const [form] = Form.useForm();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
 
   // Enhanced password validation
   const validatePassword = (password) => {
@@ -54,10 +56,16 @@ const ResetPassword = () => {
   useEffect(() => {
     let mounted = true;
 
-    const checkSession = async () => {
+    const checkSessionAndEmail = async () => {
       try {
         setSessionLoading(true);
         setSessionError('');
+
+        // Get email from URL parameters (passed from forgot password)
+        const emailFromUrl = searchParams.get('email');
+        if (emailFromUrl) {
+          setUserEmail(decodeURIComponent(emailFromUrl));
+        }
 
         const { data: { session }, error } = await supabase.auth.getSession();
         
@@ -83,6 +91,17 @@ const ResetPassword = () => {
         // Check if user has password reset access
         if (session.user.aud !== 'authenticated') {
           throw new Error('Invalid authentication session.');
+        }
+
+        // If we have email from URL, verify it matches session email
+        if (emailFromUrl && session.user.email !== emailFromUrl.toLowerCase()) {
+          console.warn('Email mismatch between URL and session:', emailFromUrl, session.user.email);
+          // Continue anyway as session is valid
+        }
+
+        // Set email from session if not from URL
+        if (!emailFromUrl && session.user.email) {
+          setUserEmail(session.user.email);
         }
 
         setSession(session);
@@ -113,7 +132,7 @@ const ResetPassword = () => {
       }
     };
 
-    checkSession();
+    checkSessionAndEmail();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (!mounted) return;
@@ -124,6 +143,9 @@ const ResetPassword = () => {
       } else if (event === 'PASSWORD_RECOVERY') {
         // This is the event we want for password reset
         setSession(session);
+        if (session?.user?.email) {
+          setUserEmail(session.user.email);
+        }
         setSessionLoading(false);
       } else {
         setSession(session);
@@ -134,7 +156,7 @@ const ResetPassword = () => {
       mounted = false;
       subscription.unsubscribe();
     };
-  }, [navigate]);
+  }, [navigate, searchParams]);
 
   const onFinish = async (values) => {
     setLoading(true);
@@ -157,9 +179,9 @@ const ResetPassword = () => {
         throw new Error('Passwords do not match. Please ensure both fields are identical.');
       }
 
-      console.log('Attempting password reset for user:', session.user.email);
+      console.log('Attempting password reset for user:', userEmail || session.user.email);
 
-      // Update user password
+      // Update user password - this will update for the authenticated user (from session)
       const { data, error } = await supabase.auth.updateUser({
         password: values.password,
       });
@@ -193,6 +215,8 @@ const ResetPassword = () => {
         throw new Error('Password update failed. No user data returned.');
       }
 
+      console.log('Password successfully updated for:', data.user.email);
+
       // Enhanced success handling
       message.success({
         content: (
@@ -200,14 +224,31 @@ const ResetPassword = () => {
             <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>
               Password updated successfully! 🎉
             </div>
-            <div>Redirecting to login page...</div>
+            <div>Your password has been reset for: <strong>{userEmail || data.user.email}</strong></div>
           </div>
         ),
         duration: 4,
       });
 
+      // Update employee table last password change timestamp (if you have that field)
+      try {
+        await supabase
+          .from('employee')
+          .update({ 
+            last_password_change: new Date().toISOString() 
+          })
+          .eq('email', userEmail || data.user.email);
+      } catch (updateError) {
+        console.warn('Could not update employee record:', updateError);
+        // Non-critical error, continue
+      }
+
       // Enhanced security: Sign out after password reset
       await supabase.auth.signOut();
+
+      // Clear any stored user data
+      localStorage.removeItem('userRole');
+      sessionStorage.removeItem('currentUser');
 
       // Redirect to login page with success state
       setTimeout(() => {
@@ -215,7 +256,8 @@ const ResetPassword = () => {
           replace: true,
           state: { 
             passwordResetSuccess: true,
-            message: 'Your password has been reset successfully. Please log in with your new password.' 
+            message: `Your password has been reset successfully for ${userEmail || data.user.email}. Please log in with your new password.`,
+            email: userEmail || data.user.email
           }
         });
       }, 2000);
@@ -313,6 +355,11 @@ const ResetPassword = () => {
           </Title>
           <Text style={{ color: '#7f8c8d', fontSize: '14px', lineHeight: '1.5' }}>
             Please wait while we validate your password reset request...
+            {userEmail && (
+              <div style={{ marginTop: 8, fontWeight: '500' }}>
+                For: <span style={{ color: '#3498db' }}>{userEmail}</span>
+              </div>
+            )}
           </Text>
         </Card>
       </div>
@@ -378,6 +425,20 @@ const ResetPassword = () => {
           }}>
             {sessionError}
           </Text>
+          
+          {userEmail && (
+            <div style={{
+              padding: '12px',
+              backgroundColor: '#fff3cd',
+              borderRadius: '6px',
+              border: '1px solid #ffeaa7',
+              marginBottom: 20
+            }}>
+              <Text style={{ color: '#856404', fontSize: '14px' }}>
+                Attempted reset for: <strong>{userEmail}</strong>
+              </Text>
+            </div>
+          )}
           
           <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
             <Button
@@ -495,8 +556,8 @@ const ResetPassword = () => {
           <SafetyOutlined /> Set New Password
         </Divider>
 
-        {/* User Info */}
-        {session && (
+        {/* User Info with Email */}
+        {(userEmail || session?.user?.email) && (
           <div style={{
             padding: '16px',
             backgroundColor: '#f0f8ff',
@@ -505,8 +566,17 @@ const ResetPassword = () => {
             marginBottom: 24,
             textAlign: 'center'
           }}>
-            <Text strong style={{ color: '#2c3e50', fontSize: '14px' }}>
-              Resetting password for: <span style={{ color: '#e74c3c' }}>{session.user.email}</span>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+              <MailOutlined style={{ color: '#3498db' }} />
+              <Text strong style={{ color: '#2c3e50', fontSize: '14px' }}>
+                Resetting password for: 
+              </Text>
+              <Text strong style={{ color: '#e74c3c', fontSize: '14px' }}>
+                {userEmail || session.user.email}
+              </Text>
+            </div>
+            <Text style={{ color: '#7f8c8d', fontSize: '12px', marginTop: '4px' }}>
+              Enter your new password below
             </Text>
           </div>
         )}

@@ -1,18 +1,55 @@
 // src/App.js
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { ConfigProvider, Spin } from 'antd';
+import { ConfigProvider, Spin, Layout } from 'antd';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 
-// Components
+// Auth Components
 import Login from './components/Auth/Login';
 import Register from './components/Auth/Register';
 import ForgotPassword from './components/Auth/ForgotPassword';
 import ResetPassword from './components/Auth/ResetPassword';
+
+// Dashboard Components
 import DashboardLayout from './components/Layout/DashboardLayout';
-import DashboardRouter from './components/Dashboard/DashboardRouter';
+import CEODashboard from './components/Dashboard/CEODashboard';
+import AdminDashboard from './components/Dashboard/AdminDashboard';
+import HRDashboard from './components/Dashboard/HRDashboard';
+import ManagerDashboard from './components/Dashboard/ManagerDashboard';
+import EmployeeDashboard from './components/Dashboard/EmployeeDashboard';
+import AccountantDashboard from './components/Dashboard/AccountantDashboard';
 
 import 'antd/dist/reset.css';
+
+// Dashboard Router Component
+const DashboardRouter = () => {
+  const { profile } = useAuth();
+  
+  if (!profile) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+        <Spin size="large" tip="Loading dashboard..." />
+      </div>
+    );
+  }
+
+  switch (profile.role) {
+    case 'ceo':
+      return <CEODashboard />;
+    case 'admin':
+      return <AdminDashboard />;
+    case 'hr':
+      return <HRDashboard />;
+    case 'manager':
+      return <ManagerDashboard />;
+    case 'accountant':
+      return <AccountantDashboard />;
+    case 'employee':
+      return <EmployeeDashboard />;
+    default:
+      return <EmployeeDashboard />;
+  }
+};
 
 // Protected Route Component
 const ProtectedRoute = ({ children }) => {
@@ -33,8 +70,7 @@ const ProtectedRoute = ({ children }) => {
   if (user && !profile) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
-        <Spin size="large" tip="Setting up your Profile">
-        </Spin>
+        <Spin size="large" tip="Setting up your profile..." />
       </div>
     );
   }
@@ -64,71 +100,116 @@ const PublicRoute = ({ children }) => {
 
 // Main App Content
 function AppContent() {
+  const { profile } = useAuth();
+
   return (
-    <Routes>
-      <Route
-        path="/login"
-        element={
-          <PublicRoute>
-            <Login />
-          </PublicRoute>
-        }
-      />
-      <Route
-        path="/register"
-        element={
-          <PublicRoute>
-            <Register />
-          </PublicRoute>
-        }
-      />
-      <Route
-        path="/forgot-password"
-        element={
-          <PublicRoute>
-            <ForgotPassword />
-          </PublicRoute>
-        }
-      />
-      <Route
-        path="/reset-password"
-        element={
-          <PublicRoute>
-            <ResetPassword />
-          </PublicRoute>
-        }
-      />
+    <Layout style={{ minHeight: '100vh' }}>
+      <Routes>
+        {/* Public Routes */}
+        <Route
+          path="/login"
+          element={
+            <PublicRoute>
+              <Login />
+            </PublicRoute>
+          }
+        />
+        <Route
+          path="/register"
+          element={
+            <PublicRoute>
+              <Register />
+            </PublicRoute>
+          }
+        />
+        <Route
+          path="/forgot-password"
+          element={
+            <PublicRoute>
+              <ForgotPassword />
+            </PublicRoute>
+          }
+        />
+        <Route
+          path="/reset-password"
+          element={
+            <PublicRoute>
+              <ResetPassword />
+            </PublicRoute>
+          }
+        />
 
-      <Route
-        path="/"
-        element={
-          <ProtectedRoute>
-            <DashboardLayout />
-          </ProtectedRoute>
-        }
-      >
-        <Route path="dashboard" element={<DashboardRouter />} />
-        <Route path="ceo-dashboard" element={<DashboardRouter />} />
-        <Route path="admin-dashboard" element={<DashboardRouter />} />
-        <Route path="hr-dashboard" element={<DashboardRouter />} />
-        <Route path="manager-dashboard" element={<DashboardRouter />} />
-        <Route path="employee-dashboard" element={<DashboardRouter />} />
-        <Route path="accountant-dashboard" element={<DashboardRouter />} />
+        {/* Protected Routes with Dashboard Layout */}
+        <Route
+          path="/"
+          element={
+            <ProtectedRoute>
+              <DashboardLayout />
+            </ProtectedRoute>
+          }
+        >
+          {/* Dashboard Routes */}
+          <Route path="ceo-dashboard" element={<DashboardRouter />} />
+          <Route path="admin-dashboard" element={<DashboardRouter />} />
+          <Route path="hr-dashboard" element={<DashboardRouter />} />
+          <Route path="manager-dashboard" element={<DashboardRouter />} />
+          <Route path="employee-dashboard" element={<DashboardRouter />} />
+          <Route path="accountant-dashboard" element={<DashboardRouter />} />
+          
+          {/* Default route based on user role */}
+          <Route 
+            index 
+            element={
+              profile ? (
+                <Navigate to={`/${profile.role}-dashboard`} replace />
+              ) : (
+                <Navigate to="/login" replace />
+              )
+            } 
+          />
+        </Route>
 
-        <Route index element={<Navigate to="/dashboard" />} />
-      </Route>
-
-      <Route path="*" element={<Navigate to="/dashboard" />} />
-    </Routes>
+        {/* Catch all route - redirect to appropriate dashboard */}
+        <Route 
+          path="*" 
+          element={
+            profile ? (
+              <Navigate to={`/${profile.role}-dashboard`} replace />
+            ) : (
+              <Navigate to="/login" replace />
+            )
+          } 
+        />
+      </Routes>
+    </Layout>
   );
 }
 
+// Main App Component
 function App() {
   return (
     <ConfigProvider
       theme={{
         token: {
           colorPrimary: '#1890ff',
+          borderRadius: 6,
+          colorBgContainer: '#ffffff',
+        },
+        components: {
+          Layout: {
+            bodyBg: '#f5f5f5',
+            headerBg: '#001529',
+            siderBg: '#001529',
+          },
+          Card: {
+            borderRadiusLG: 8,
+          },
+          Button: {
+            borderRadius: 6,
+          },
+          Input: {
+            borderRadius: 6,
+          },
         },
       }}
     >
@@ -140,5 +221,5 @@ function App() {
     </ConfigProvider>
   );
 }
- 
+
 export default App;

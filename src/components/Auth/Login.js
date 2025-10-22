@@ -1,7 +1,7 @@
 // src/components/Auth/Login.js
 import React, { useState, useEffect } from 'react';
-import { Form, Input, Button, Card, message, Typography, Divider, Image } from 'antd';
-import { UserOutlined, LockOutlined, MailOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
+import { Form, Input, Button, Card, message, Typography, Divider, Image, Spin, Alert } from 'antd';
+import { UserOutlined, LockOutlined, MailOutlined, SafetyCertificateOutlined, DashboardOutlined } from '@ant-design/icons';
 import { supabase } from '../../services/supabase';
 import { useNavigate, Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
@@ -10,10 +10,11 @@ const { Title, Text } = Typography;
 
 const Login = () => {
   const [loading, setLoading] = useState(false);
+  const [userProfile, setUserProfile] = useState(null);
   const navigate = useNavigate();
   const location = useLocation();
   const [form] = Form.useForm();
-  const { refreshProfile } = useAuth();
+  const { refreshProfile, user } = useAuth();
 
   useEffect(() => {
     // Check for password reset success message
@@ -22,7 +23,12 @@ const Login = () => {
       // Clear the state
       navigate(location.pathname, { replace: true, state: {} });
     }
-  }, [location, navigate]);
+
+    // Redirect if already logged in
+    if (user) {
+      navigate('/dashboard');
+    }
+  }, [location, navigate, user]);
 
   // Email validation regex
   const validateEmail = (email) => {
@@ -38,6 +44,89 @@ const Login = () => {
       return 'Password must be at least 6 characters long';
     }
     return null;
+  };
+
+  // Fetch user profile from employee table
+  const fetchUserProfile = async (userId, email) => {
+    try {
+      console.log('Fetching profile for:', { userId, email });
+
+      // Try to get profile by auth_user_id first
+      let { data: profile, error } = await supabase
+        .from('employee')
+        .select('*')
+        .eq('auth_user_id', userId)
+        .single();
+
+      // If not found, try by email
+      if (error || !profile) {
+        console.log('Profile not found by auth_id, trying email...');
+        const { data: profileByEmail, error: emailError } = await supabase
+          .from('employee')
+          .select('*')
+          .eq('email', email.toLowerCase())
+          .single();
+
+        if (emailError || !profileByEmail) {
+          throw new Error('User profile not found. Please contact administrator.');
+        }
+        profile = profileByEmail;
+      }
+
+      console.log('User profile fetched:', profile);
+      return profile;
+    } catch (error) {
+      console.error('Error fetching user profile:', error);
+      throw error;
+    }
+  };
+
+  // Determine dashboard route based on role
+  const getDashboardRoute = (role) => {
+    const roleRoutes = {
+      'admin': '/admin/dashboard',
+      'hr': '/hr/dashboard',
+      'ceo': '/ceo/dashboard',
+      'manager': '/manager/dashboard',
+      'accountant': '/accountant/dashboard',
+      'employee': '/employee/dashboard'
+    };
+    
+    return roleRoutes[role?.toLowerCase()] || '/dashboard';
+  };
+
+  // Store user data in session storage for easy access
+  const storeUserSession = (userData, profile) => {
+    const sessionData = {
+      userId: userData.id,
+      email: userData.email,
+      profile: {
+        empid: profile.empid,
+        first_name: profile.first_name,
+        last_name: profile.last_name,
+        role: profile.role,
+        avatarurl: profile.avatarurl,
+        is_active: profile.is_active
+      },
+      loginTime: new Date().toISOString()
+    };
+
+    sessionStorage.setItem('currentUser', JSON.stringify(sessionData));
+    localStorage.setItem('userRole', profile.role);
+  };
+
+  // Update last login time
+  const updateLastLogin = async (empid) => {
+    try {
+      await supabase
+        .from('employee')
+        .update({ 
+          last_login: new Date().toISOString() 
+        })
+        .eq('empid', empid);
+    } catch (error) {
+      console.warn('Could not update last login time:', error);
+    }
   };
 
   const onFinish = async (values) => {
@@ -83,15 +172,41 @@ const Login = () => {
 
       if (data?.user) {
         console.log('Login successful, user:', data.user);
-        message.success('Login successful! Setting up your dashboard...');
+        
+        // Fetch user profile from employee table
+        const userProfile = await fetchUserProfile(data.user.id, data.user.email);
+        
+        if (!userProfile.is_active) {
+          throw new Error('Your account is deactivated. Please contact administrator.');
+        }
 
-        // Refresh profile to ensure it's loaded
+        // Store user session data
+        storeUserSession(data.user, userProfile);
+        
+        // Update last login time
+        await updateLastLogin(userProfile.empid);
+
+        // Set user profile state
+        setUserProfile(userProfile);
+
+        // Refresh profile in auth context
         await refreshProfile();
+
+        // Determine dashboard route based on role
+        const dashboardRoute = getDashboardRoute(userProfile.role);
+        
+        message.success(`Welcome back, ${userProfile.first_name}! Redirecting to ${userProfile.role} dashboard...`);
 
         // Add a small delay to show success message
         setTimeout(() => {
-          navigate('/dashboard');
-        }, 1500);
+          navigate(dashboardRoute, { 
+            state: { 
+              userProfile: userProfile,
+              authUser: data.user
+            }
+          });
+        }, 2000);
+
       } else {
         throw new Error('Login failed. No user data returned.');
       }
@@ -126,14 +241,53 @@ const Login = () => {
     message.info('Form cleared');
   };
 
-  // Handle demo login for testing
-  const handleDemoLogin = () => {
+  // Handle demo login for testing with different roles
+  const handleDemoLogin = (role = 'employee') => {
+    const demoCredentials = {
+      'admin': { email: 'admin@company.com', password: 'admin123' },
+      'hr': { email: 'hr@company.com', password: 'hr123' },
+      'ceo': { email: 'ceo@company.com', password: 'ceo123' },
+      'manager': { email: 'manager@company.com', password: 'manager123' },
+      'accountant': { email: 'accountant@company.com', password: 'accountant123' },
+      'employee': { email: 'employee@company.com', password: 'employee123' }
+    };
+
+    const credentials = demoCredentials[role] || demoCredentials.employee;
+    
     form.setFieldsValue({
-      email: 'demo@example.com',
-      password: 'demopassword'
+      email: credentials.email,
+      password: credentials.password
     });
-    message.info('Demo credentials filled. Click Sign In to test.');
+    
+    message.info(`Demo ${role} credentials filled. Click Sign In to test.`);
   };
+
+  // Demo login buttons for different roles
+  const DemoLoginButtons = () => (
+    <div style={{ marginBottom: '20px' }}>
+      <Text strong style={{ display: 'block', marginBottom: '10px', color: '#7f8c8d' }}>
+        Quick Demo Access:
+      </Text>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+        {['employee', 'manager', 'hr', 'accountant'].map(role => (
+          <Button
+            key={role}
+            size="small"
+            onClick={() => handleDemoLogin(role)}
+            disabled={loading}
+            style={{
+              textTransform: 'capitalize',
+              fontSize: '12px',
+              padding: '4px 8px',
+              height: 'auto'
+            }}
+          >
+            {role}
+          </Button>
+        ))}
+      </div>
+    </div>
+  );
 
   return (
     <div style={{
@@ -154,7 +308,7 @@ const Login = () => {
     }}>
       <Card
         style={{
-          width: 450,
+          width: 480,
           maxWidth: '90vw',
           boxShadow: '0 8px 32px rgba(0,0,0,0.3)',
           borderRadius: '16px',
@@ -193,11 +347,10 @@ const Login = () => {
           </div>
         </div>
 
-        {/* AIPL Logo Section */}
         <div style={{
           textAlign: 'center',
           marginBottom: 28,
-          padding: '20px',
+          padding: '16px',
           backgroundColor: '#ffffff',
           borderRadius: '12px',
           boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
@@ -205,30 +358,27 @@ const Login = () => {
         }}>
           <Text strong style={{ 
             display: 'block', 
-            marginBottom: 12,
-            fontSize: '16px',
+            marginBottom: 8,
+            fontSize: '14px',
             color: '#2c3e50'
           }}>
             EMS For
           </Text>
-          <Image
-            src="/images/aipl.png"
-            alt="Sixth Automotive"
-            preview={false}
-            style={{
-              height: '40px',
-              width: 'auto',
-              objectFit: 'contain'
-            }}
-            onError={(e) => {
-              console.error('Failed to load AIPL logo');
-              e.target.style.display = 'none';
-            }}
-          />
+          <Text strong style={{ 
+            display: 'block', 
+            marginBottom: 8,
+            fontSize: '20px',
+            color: '#2c3e50'
+          }}>
+            Sixth Gear Automotive Pvt Ltd
+          </Text>
         </div>
 
+        {/* Demo Login Buttons */}
+        <DemoLoginButtons />
+
         <Divider style={{ 
-          margin: '28px 0', 
+          margin: '20px 0', 
           borderColor: '#bdc3c7',
           color: '#34495e',
           fontSize: '16px',
@@ -387,7 +537,7 @@ const Login = () => {
                 </Button>
                 
                 <Button
-                  onClick={handleDemoLogin}
+                  onClick={() => handleDemoLogin('employee')}
                   block
                   size="large"
                   disabled={loading}
@@ -401,7 +551,7 @@ const Login = () => {
                     borderRadius: '10px'
                   }}
                 >
-                  Demo Credentials
+                  Demo Login
                 </Button>
               </div>
             </div>
@@ -443,6 +593,18 @@ const Login = () => {
             Register now
           </Link>
         </div>
+
+        {/* User Profile Info (shown after successful login) */}
+        {userProfile && (
+          <Alert
+            message="Login Successful"
+            description={`Welcome ${userProfile.first_name} ${userProfile.last_name}! Redirecting to ${userProfile.role} dashboard...`}
+            type="success"
+            showIcon
+            icon={<DashboardOutlined />}
+            style={{ marginTop: '20px' }}
+          />
+        )}
       </Card>
     </div>
   );

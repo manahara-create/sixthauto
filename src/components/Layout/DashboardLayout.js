@@ -186,7 +186,6 @@ const DashboardLayout = () => {
           }}
         />
 
-        {/* AIPL Logo in Sidebar */}
         <div style={{
           position: 'absolute',
           bottom: 20,

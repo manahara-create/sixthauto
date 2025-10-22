@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { Form, Input, Button, Card, message, Typography, Image, Alert, Divider } from 'antd';
-import { MailOutlined, ArrowLeftOutlined, SafetyOutlined, InfoCircleOutlined } from '@ant-design/icons';
+import { Form, Input, Button, Card, message, Typography, Image, Alert, Divider, Spin } from 'antd';
+import { MailOutlined, ArrowLeftOutlined, SafetyOutlined, InfoCircleOutlined, UserOutlined } from '@ant-design/icons';
 import { supabase } from '../../services/supabase';
 import { useNavigate, Link } from 'react-router-dom';
 
@@ -10,6 +10,8 @@ const ForgotPassword = () => {
   const [loading, setLoading] = useState(false);
   const [emailSent, setEmailSent] = useState(false);
   const [emailError, setEmailError] = useState('');
+  const [checkingEmail, setCheckingEmail] = useState(false);
+  const [userData, setUserData] = useState(null);
   const navigate = useNavigate();
   const [form] = Form.useForm();
 
@@ -18,24 +20,88 @@ const ForgotPassword = () => {
     return emailRegex.test(email);
   };
 
+  // Check if email exists in both user table and employee table
+  const checkEmailExists = async (email) => {
+    try {
+      setCheckingEmail(true);
+      const normalizedEmail = email.trim().toLowerCase();
+
+      // Check in auth.users (Supabase)
+      const { data: authData, error: authError } = await supabase
+        .from('employee') // Using employee table to check registered users
+        .select('empid, email, first_name, last_name, role, status')
+        .eq('email', normalizedEmail)
+        .single();
+
+      if (authError || !authData) {
+        return { exists: false, message: 'No account found with this email address.' };
+      }
+
+      // Check if user is active
+      if (authData.status !== 'active') {
+        return { 
+          exists: true, 
+          user: authData, 
+          message: 'Your account is deactivated. Please contact administrator.' 
+        };
+      }
+
+      return { 
+        exists: true, 
+        user: authData,
+        message: 'Account found and active.' 
+      };
+
+    } catch (error) {
+      console.error('Error checking email:', error);
+      return { exists: false, message: 'Error verifying email. Please try again.' };
+    } finally {
+      setCheckingEmail(false);
+    }
+  };
+
   const onFinish = async (values) => {
     setLoading(true);
     setEmailError('');
     
     try {
+      const email = values.email.trim().toLowerCase();
+
       // Client-side validation
-      if (!validateEmail(values.email)) {
+      if (!validateEmail(email)) {
         message.error('Please enter a valid email address');
         setLoading(false);
         return;
       }
 
-      console.log('Sending password reset email to:', values.email);
+      console.log('Checking email existence:', email);
+      
+      // First check if email exists
+      const emailCheck = await checkEmailExists(email);
+      
+      if (!emailCheck.exists) {
+        // For security, don't reveal if email doesn't exist
+        console.log('Email not found, but showing generic success message');
+        setEmailSent(true);
+        setUserData(null);
+        message.info('If an account exists with this email, you will receive a password reset link.', 5);
+        return;
+      }
+
+      // If account is deactivated
+      if (emailCheck.user && emailCheck.user.status !== 'active') {
+        throw new Error(emailCheck.message);
+      }
+
+      // Store user data for reset password page
+      setUserData(emailCheck.user);
+
+      console.log('Sending password reset email to:', email);
       
       const { error } = await supabase.auth.resetPasswordForEmail(
-        values.email.trim().toLowerCase(), 
+        email, 
         {
-          redirectTo: `${window.location.origin}/reset-password`,
+          redirectTo: `${window.location.origin}/reset-password?email=${encodeURIComponent(email)}`,
         }
       );
 
@@ -45,9 +111,6 @@ const ForgotPassword = () => {
         // Handle specific errors
         if (error.message.includes('Email not confirmed')) {
           throw new Error('Please verify your email address before resetting password.');
-        } else if (error.message.includes('User not found')) {
-          // Don't reveal that user doesn't exist for security
-          console.log('User not found, but showing success message for security');
         } else if (error.message.includes('rate limit') || error.message.includes('too many requests')) {
           throw new Error('Too many attempts. Please try again in a few minutes.');
         } else {
@@ -55,9 +118,9 @@ const ForgotPassword = () => {
         }
       }
 
-      // Always show success message even if user doesn't exist (security best practice)
+      // Success - show user-specific message
       setEmailSent(true);
-      message.success('If an account exists with this email, you will receive a password reset link.', 5);
+      message.success(`Password reset link sent to ${email}. Please check your inbox.`, 5);
       
     } catch (error) {
       console.error('Forgot password error:', error);
@@ -83,6 +146,17 @@ const ForgotPassword = () => {
   const handleReset = () => {
     form.resetFields();
     setEmailError('');
+    setUserData(null);
+  };
+
+  // Navigate to reset password with email pre-filled
+  const handleManualReset = () => {
+    const email = form.getFieldValue('email');
+    if (email && validateEmail(email)) {
+      navigate(`/reset-password?email=${encodeURIComponent(email.trim().toLowerCase())}`);
+    } else {
+      message.warning('Please enter a valid email address first.');
+    }
   };
 
   if (emailSent) {
@@ -159,15 +233,46 @@ const ForgotPassword = () => {
             <Title level={3} style={{ color: '#27ae60', marginBottom: 16 }}>
               Check Your Inbox!
             </Title>
-            <Text style={{ 
-              fontSize: '15px', 
-              color: '#2c3e50',
-              lineHeight: '1.6',
-              display: 'block',
-              marginBottom: 16
-            }}>
-              If an account exists with the email you provided, you will receive a password reset link shortly.
-            </Text>
+            
+            {userData ? (
+              <>
+                <div style={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'center',
+                  marginBottom: 16,
+                  padding: '12px',
+                  backgroundColor: '#ffffff',
+                  borderRadius: '8px'
+                }}>
+                  <UserOutlined style={{ color: '#3498db', marginRight: '8px' }} />
+                  <Text strong style={{ color: '#2c3e50' }}>
+                    {userData.first_name} {userData.last_name} ({userData.role})
+                  </Text>
+                </div>
+                <Text style={{ 
+                  fontSize: '15px', 
+                  color: '#2c3e50',
+                  lineHeight: '1.6',
+                  display: 'block',
+                  marginBottom: 16
+                }}>
+                  We've sent a password reset link to your email address.
+                  Click the link in the email to reset your password.
+                </Text>
+              </>
+            ) : (
+              <Text style={{ 
+                fontSize: '15px', 
+                color: '#2c3e50',
+                lineHeight: '1.6',
+                display: 'block',
+                marginBottom: 16
+              }}>
+                If an account exists with the email you provided, you will receive a password reset link shortly.
+              </Text>
+            )}
+            
             <Alert
               message="Security Notice"
               description="The reset link will expire in 1 hour for security reasons."
@@ -183,7 +288,7 @@ const ForgotPassword = () => {
           }} />
 
           {/* Action Buttons */}
-          <div style={{ display: 'flex', gap: '12px', marginBottom: 24 }}>
+          <div style={{ display: 'flex', gap: '12px', marginBottom: 24, flexDirection: 'column' }}>
             <Button
               type="primary"
               onClick={() => navigate('/login')}
@@ -202,25 +307,47 @@ const ForgotPassword = () => {
             >
               Back to Login
             </Button>
-            <Button
-              onClick={() => {
-                setEmailSent(false);
-                form.resetFields();
-              }}
-              block
-              size="large"
-              style={{
-                height: '50px',
-                fontSize: '16px',
-                fontWeight: '500',
-                background: '#ecf0f1',
-                border: '2px solid #bdc3c7',
-                color: '#2c3e50',
-                borderRadius: '10px'
-              }}
-            >
-              Send Another
-            </Button>
+            
+            <div style={{ display: 'flex', gap: '12px' }}>
+              <Button
+                onClick={() => {
+                  setEmailSent(false);
+                  form.resetFields();
+                }}
+                block
+                size="large"
+                style={{
+                  height: '50px',
+                  fontSize: '16px',
+                  fontWeight: '500',
+                  background: '#ecf0f1',
+                  border: '2px solid #bdc3c7',
+                  color: '#2c3e50',
+                  borderRadius: '10px'
+                }}
+              >
+                Send Another
+              </Button>
+              
+              {userData && (
+                <Button
+                  onClick={handleManualReset}
+                  block
+                  size="large"
+                  style={{
+                    height: '50px',
+                    fontSize: '16px',
+                    fontWeight: '500',
+                    background: '#f39c12',
+                    border: '2px solid #e67e22',
+                    color: 'white',
+                    borderRadius: '10px'
+                  }}
+                >
+                  Go to Reset
+                </Button>
+              )}
+            </div>
           </div>
 
           {/* Additional Help */}
@@ -237,7 +364,8 @@ const ForgotPassword = () => {
             <Text style={{ color: '#2c3e50', fontSize: '14px' }}>
               • Check your spam folder<br/>
               • Ensure you entered the correct email address<br/>
-              • Wait a few minutes and try again
+              • Wait a few minutes and try again<br/>
+              • Contact IT support if the problem persists
             </Text>
           </div>
 
@@ -340,7 +468,6 @@ const ForgotPassword = () => {
           </Text>
         </div>
 
-        {/* AIPL Logo Section */}
         <div style={{
           textAlign: 'center',
           marginBottom: 28,
@@ -358,16 +485,14 @@ const ForgotPassword = () => {
           }}>
             EMS For
           </Text>
-          <Image
-            src="/images/aipl.png"
-            alt="Sixth Automotive"
-            preview={false}
-            style={{
-              height: '40px',
-              width: 'auto',
-              objectFit: 'contain'
-            }}
-          />
+          <Text strong style={{ 
+            display: 'block', 
+            marginBottom: 8,
+            fontSize: '20px',
+            color: '#2c3e50'
+          }}>
+            Sixth Gear Automotive Pvt Ltd
+          </Text>
         </div>
 
         {/* Email Error Alert */}
@@ -435,6 +560,8 @@ const ForgotPassword = () => {
               prefix={<MailOutlined style={{ color: '#3498db' }} />} 
               placeholder="Enter your registered email address" 
               size="large"
+              disabled={loading || checkingEmail}
+              suffix={checkingEmail ? <Spin size="small" /> : null}
               style={{
                 height: '48px',
                 fontSize: '15px',
@@ -454,6 +581,7 @@ const ForgotPassword = () => {
                 block
                 size="large"
                 icon={<MailOutlined />}
+                disabled={checkingEmail}
                 style={{
                   height: '50px',
                   fontSize: '16px',
@@ -464,12 +592,13 @@ const ForgotPassword = () => {
                   boxShadow: '0 4px 15px rgba(231, 76, 60, 0.3)'
                 }}
               >
-                Send Reset Link
+                {checkingEmail ? 'Checking...' : 'Send Reset Link'}
               </Button>
               <Button
                 onClick={handleReset}
                 block
                 size="large"
+                disabled={loading || checkingEmail}
                 style={{
                   height: '50px',
                   fontSize: '16px',
