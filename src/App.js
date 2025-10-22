@@ -13,7 +13,6 @@ import ResetPassword from './components/Auth/ResetPassword';
 // Dashboard Components
 import DashboardLayout from './components/Layout/DashboardLayout';
 import CEODashboard from './components/Dashboard/CEODashboard';
-import AdminDashboard from './components/Dashboard/AdminDashboard';
 import HRDashboard from './components/Dashboard/HRDashboard';
 import ManagerDashboard from './components/Dashboard/ManagerDashboard';
 import EmployeeDashboard from './components/Dashboard/EmployeeDashboard';
