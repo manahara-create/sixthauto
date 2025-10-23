@@ -94,16 +94,6 @@ const DashboardLayout = () => {
       key: '/dashboard',
       icon: <DashboardOutlined style={{ color: '#3498db' }} />,
       label: 'Dashboard',
-    },
-    {
-      key: '/departments',
-      icon: <CrownOutlined style={{ color: '#f39c12' }} />,
-      label: 'Departments',
-    },
-    {
-      key: '/personal',
-      icon: <UserOutlined style={{ color: '#27ae60' }} />,
-      label: 'Personal',
     }
   ];
 
