@@ -241,54 +241,6 @@ const Login = () => {
     message.info('Form cleared');
   };
 
-  // Handle demo login for testing with different roles
-  const handleDemoLogin = (role = 'employee') => {
-    const demoCredentials = {
-      'admin': { email: 'admin@company.com', password: 'admin123' },
-      'hr': { email: 'hr@company.com', password: 'hr123' },
-      'ceo': { email: 'ceo@company.com', password: 'ceo123' },
-      'manager': { email: 'manager@company.com', password: 'manager123' },
-      'accountant': { email: 'accountant@company.com', password: 'accountant123' },
-      'employee': { email: 'employee@company.com', password: 'employee123' }
-    };
-
-    const credentials = demoCredentials[role] || demoCredentials.employee;
-    
-    form.setFieldsValue({
-      email: credentials.email,
-      password: credentials.password
-    });
-    
-    message.info(`Demo ${role} credentials filled. Click Sign In to test.`);
-  };
-
-  // Demo login buttons for different roles
-  const DemoLoginButtons = () => (
-    <div style={{ marginBottom: '20px' }}>
-      <Text strong style={{ display: 'block', marginBottom: '10px', color: '#7f8c8d' }}>
-        Quick Demo Access:
-      </Text>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-        {['employee', 'manager', 'hr', 'accountant'].map(role => (
-          <Button
-            key={role}
-            size="small"
-            onClick={() => handleDemoLogin(role)}
-            disabled={loading}
-            style={{
-              textTransform: 'capitalize',
-              fontSize: '12px',
-              padding: '4px 8px',
-              height: 'auto'
-            }}
-          >
-            {role}
-          </Button>
-        ))}
-      </div>
-    </div>
-  );
-
   return (
     <div style={{
       display: 'flex',
