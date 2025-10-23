@@ -1,162 +1,156 @@
 // src/contexts/AuthContext.js
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useState, useContext, useEffect } from 'react';
 import { supabase } from '../services/supabase';
+import { message } from 'antd';
 
 const AuthContext = createContext({});
-export const useAuth = () => useContext(AuthContext);
+
+export const useAuth = () => {
+  return useContext(AuthContext);
+};
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // --- Fetch user profile from Supabase ---
-  const fetchUserProfile = async (authUser) => {
-    if (!authUser) {
-      setProfile(null);
-      return null;
-    }
-
-    try {
-      console.log('Fetching profile for user:', authUser.id);
-
-      // Try by auth_user_id
-      let { data: profile, error } = await supabase
-        .from('employee')
-        .select('*')
-        .eq('auth_user_id', authUser.id)
-        .single();
-
-      // Try by email if not found
-      if (error || !profile) {
-        console.log('Profile not found by auth_user_id, trying email...');
-        const { data: profileByEmail, error: emailError } = await supabase
-          .from('employee')
-          .select('*')
-          .eq('email', authUser.email)
-          .single();
-
-        if (profileByEmail) {
-          profile = profileByEmail;
-
-          // Update auth_user_id for next login
-          await supabase
-            .from('employee')
-            .update({ auth_user_id: authUser.id })
-            .eq('empid', profile.empid);
-        } else if (emailError) {
-          console.error('Error fetching profile by email:', emailError);
-        }
-      }
-
-      // Found or created profile
-      if (profile) {
-        console.log('User profile loaded:', profile);
-        setProfile(profile);
-        return profile;
-      } else {
-        console.log('No profile found, creating new one...');
-        const newProfile = {
-          email: authUser.email,
-          first_name:
-            authUser.user_metadata?.full_name?.split(' ')[0] ||
-            authUser.email.split('@')[0],
-          last_name:
-            authUser.user_metadata?.full_name?.split(' ').slice(1).join(' ') ||
-            '',
-          role: authUser.user_metadata?.role || 'employee',
-          department: authUser.user_metadata?.department || 'General',
-          status: 'Active',
-          auth_user_id: authUser.id,
-          created_at: new Date().toISOString(),
-        };
-
-        const { data: createdProfile, error: createError } = await supabase
-          .from('employee')
-          .insert([newProfile])
-          .select()
-          .single();
-
-        if (createError) {
-          console.error('Error creating profile:', createError);
-          return null;
-        }
-
-        console.log('New profile created:', createdProfile);
-        setProfile(createdProfile);
-        return createdProfile;
-      }
-    } catch (error) {
-      console.error('Error in fetchUserProfile:', error);
-      return null;
-    }
-  };
-
-  // --- Dashboard route helper ---
-  const getDashboardRoute = (role) => {
-    switch (role) {
-      case 'ceo':
-        return '/ceo-dashboard';
-      case 'hr':
-        return '/hr-dashboard';
-      case 'manager':
-        return '/manager-dashboard';
-      case 'accountant':
-        return '/accountant-dashboard';
-      case 'employee':
-      default:
-        return '/employee-dashboard';
-    }
-  };
-
-  // --- Auth initialization ---
   useEffect(() => {
-    const initializeAuth = async () => {
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        const authUser = session?.user ?? null;
-        setUser(authUser);
-
-        if (authUser) {
-          await fetchUserProfile(authUser);
+    initializeAuth();
+    
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (event, session) => {
+        console.log('Auth state changed:', event, session);
+        if (session) {
+          setUser(session.user);
+          await fetchUserProfile(session.user);
         } else {
+          setUser(null);
           setProfile(null);
+          sessionStorage.removeItem('userProfile');
+          localStorage.removeItem('userRole');
         }
-      } catch (error) {
-        console.error('Error initializing auth:', error);
-      } finally {
         setLoading(false);
       }
-    };
-
-    initializeAuth();
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      const authUser = session?.user ?? null;
-      setUser(authUser);
-
-      if (authUser) {
-        await fetchUserProfile(authUser);
-      } else {
-        setProfile(null);
-      }
-      setLoading(false);
-    });
+    );
 
     return () => subscription.unsubscribe();
   }, []);
 
-  // --- Context value ---
+  const initializeAuth = async () => {
+    try {
+      // Check for stored profile first
+      const storedProfile = sessionStorage.getItem('userProfile');
+      if (storedProfile) {
+        setProfile(JSON.parse(storedProfile));
+      }
+
+      const { data: { session }, error } = await supabase.auth.getSession();
+      if (error) throw error;
+      
+      if (session) {
+        setUser(session.user);
+        await fetchUserProfile(session.user);
+      }
+    } catch (error) {
+      console.error('Auth initialization error:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchUserProfile = async (userData) => {
+    try {
+      console.log('Fetching profile for:', userData.email);
+      
+      // For admin user, create virtual profile
+      if (userData.email === 'admin@superadmin.com') {
+        const adminProfile = {
+          empid: 0,
+          first_name: 'Super',
+          last_name: 'Admin',
+          email: 'admin@superadmin.com',
+          role: 'admin',
+          department: 'AUTOMOTIVE',
+          is_active: true,
+          auth_user_id: userData.id
+        };
+        setProfile(adminProfile);
+        sessionStorage.setItem('userProfile', JSON.stringify(adminProfile));
+        localStorage.setItem('userRole', 'admin');
+        return;
+      }
+
+      // Try to get profile by auth_user_id
+      let { data: profile, error } = await supabase
+        .from('employee')
+        .select('*')
+        .eq('auth_user_id', userData.id)
+        .single();
+
+      // If not found, try by email
+      if (error || !profile) {
+        console.log('Trying to fetch by email...');
+        const { data: profileByEmail, error: emailError } = await supabase
+          .from('employee')
+          .select('*')
+          .eq('email', userData.email.toLowerCase())
+          .single();
+
+        if (emailError || !profileByEmail) {
+          console.error('Profile not found for user:', userData.email);
+          message.error('User profile not found. Please contact administrator.');
+          await supabase.auth.signOut();
+          return;
+        }
+        profile = profileByEmail;
+      }
+
+      if (!profile.is_active) {
+        message.error('Your account has been deactivated. Please contact administrator.');
+        await supabase.auth.signOut();
+        return;
+      }
+
+      console.log('Profile loaded:', profile);
+      setProfile(profile);
+      sessionStorage.setItem('userProfile', JSON.stringify(profile));
+      localStorage.setItem('userRole', profile.role);
+      
+    } catch (error) {
+      console.error('Error fetching profile:', error);
+      message.error('Failed to load user profile');
+    }
+  };
+
+  const refreshProfile = async () => {
+    if (user) {
+      await fetchUserProfile(user);
+    }
+  };
+
+  const logout = async () => {
+    try {
+      await supabase.auth.signOut();
+      setUser(null);
+      setProfile(null);
+      sessionStorage.removeItem('userProfile');
+      localStorage.removeItem('userRole');
+      message.success('Logged out successfully');
+    } catch (error) {
+      console.error('Logout error:', error);
+      message.error('Failed to logout');
+    }
+  };
+
   const value = {
     user,
     profile,
     loading,
-    signOut: () => supabase.auth.signOut(),
-    refreshProfile: () => user && fetchUserProfile(user),
-    getDashboardRoute,
+    refreshProfile,
+    logout,
+    setProfile
   };
 
-  // ✅ Only one return statement here
   return (
     <AuthContext.Provider value={value}>
       {children}

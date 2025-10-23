@@ -1,59 +1,50 @@
-// components/ProtectedRoute.js
-import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { supabase } from '../services/supabase';
-import { Spin } from 'antd';
+// src/components/Auth/ProtectedRoute.js
+import React from 'react';
+import { Navigate } from 'react-router-dom';
+import { useAuth } from './AuthContext';
+import { Spin, Alert } from 'antd';
 
-const ProtectedRoute = ({ children }) => {
-  const [loading, setLoading] = useState(true);
-  const [authenticated, setAuthenticated] = useState(false);
-  const navigate = useNavigate();
-
-  useEffect(() => {
-    checkAuth();
-  }, []);
-
-  const checkAuth = async () => {
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session) {
-        console.log('No session found, redirecting to login');
-        navigate('/login');
-        return;
-      }
-
-      // Verify user exists in employee table
-      const { data: profile } = await supabase
-        .from('employee')
-        .select('*')
-        .eq('auth_user_id', session.user.id)
-        .single();
-
-      if (!profile) {
-        console.error('User profile not found in employee table');
-        navigate('/login');
-        return;
-      }
-
-      setAuthenticated(true);
-    } catch (error) {
-      console.error('Auth check error:', error);
-      navigate('/login');
-    } finally {
-      setLoading(false);
-    }
-  };
+const ProtectedRoute = ({ children, allowedRoles = [] }) => {
+  const { user, profile, loading } = useAuth();
 
   if (loading) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
-        <Spin size="large" tip="Checking authentication..." />
+        <Spin size="large" />
       </div>
     );
   }
 
-  return authenticated ? children : null;
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
+
+  if (!profile) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+        <Alert
+          message="Profile Not Found"
+          description="Your user profile could not be loaded. Please contact administrator."
+          type="error"
+        />
+      </div>
+    );
+  }
+
+  // Check role-based access
+  if (allowedRoles.length > 0 && !allowedRoles.includes(profile.role)) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+        <Alert
+          message="Access Denied"
+          description="You don't have permission to access this page."
+          type="warning"
+        />
+      </div>
+    );
+  }
+
+  return children;
 };
 
 export default ProtectedRoute;
