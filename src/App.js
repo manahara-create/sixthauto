@@ -77,7 +77,7 @@ const ProtectedRoute = ({ children }) => {
 
 // Public Route Component
 const PublicRoute = ({ children }) => {
-  const { user, profile, loading } = useAuth();
+  const { user, profile, loading, getDashboardRoute } = useAuth(); // ✅ one single hook call
 
   if (loading) {
     return (
@@ -88,12 +88,12 @@ const PublicRoute = ({ children }) => {
   }
 
   if (user && profile) {
-    const { getDashboardRoute } = useAuth();
     return <Navigate to={getDashboardRoute(profile.role)} />;
   }
 
   return children;
 };
+
 
 // Main App Content
 function AppContent() {

@@ -3,7 +3,6 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { supabase } from '../services/supabase';
 
 const AuthContext = createContext({});
-
 export const useAuth = () => useContext(AuthContext);
 
 export const AuthProvider = ({ children }) => {
@@ -11,6 +10,7 @@ export const AuthProvider = ({ children }) => {
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  // --- Fetch user profile from Supabase ---
   const fetchUserProfile = async (authUser) => {
     if (!authUser) {
       setProfile(null);
@@ -19,15 +19,15 @@ export const AuthProvider = ({ children }) => {
 
     try {
       console.log('Fetching profile for user:', authUser.id);
-      
-      // Try to find by auth_user_id first
+
+      // Try by auth_user_id
       let { data: profile, error } = await supabase
         .from('employee')
         .select('*')
         .eq('auth_user_id', authUser.id)
         .single();
 
-      // If not found, try by email
+      // Try by email if not found
       if (error || !profile) {
         console.log('Profile not found by auth_user_id, trying email...');
         const { data: profileByEmail, error: emailError } = await supabase
@@ -38,7 +38,8 @@ export const AuthProvider = ({ children }) => {
 
         if (profileByEmail) {
           profile = profileByEmail;
-          // Update the profile with auth_user_id for future logins
+
+          // Update auth_user_id for next login
           await supabase
             .from('employee')
             .update({ auth_user_id: authUser.id })
@@ -48,17 +49,21 @@ export const AuthProvider = ({ children }) => {
         }
       }
 
+      // Found or created profile
       if (profile) {
         console.log('User profile loaded:', profile);
         setProfile(profile);
         return profile;
       } else {
         console.log('No profile found, creating new one...');
-        // Create a basic employee profile if none exists
         const newProfile = {
           email: authUser.email,
-          first_name: authUser.user_metadata?.full_name?.split(' ')[0] || authUser.email.split('@')[0],
-          last_name: authUser.user_metadata?.full_name?.split(' ').slice(1).join(' ') || '',
+          first_name:
+            authUser.user_metadata?.full_name?.split(' ')[0] ||
+            authUser.email.split('@')[0],
+          last_name:
+            authUser.user_metadata?.full_name?.split(' ').slice(1).join(' ') ||
+            '',
           role: authUser.user_metadata?.role || 'employee',
           department: authUser.user_metadata?.department || 'General',
           status: 'Active',
@@ -87,19 +92,24 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  // Get dashboard route based on role
-  const getDashboardRoute = (userRole) => {
-    const roleRoutes = {
-      'ceo': '/ceo-dashboard',
-      'admin': '/admin-dashboard',
-      'hr': '/hr-dashboard',
-      'manager': '/manager-dashboard',
-      'accountant': '/accountant-dashboard',
-      'employee': '/employee-dashboard'
-    };
-    return roleRoutes[userRole?.toLowerCase()] || '/employee-dashboard';
+  // --- Dashboard route helper ---
+  const getDashboardRoute = (role) => {
+    switch (role) {
+      case 'ceo':
+        return '/ceo-dashboard';
+      case 'hr':
+        return '/hr-dashboard';
+      case 'manager':
+        return '/manager-dashboard';
+      case 'accountant':
+        return '/accountant-dashboard';
+      case 'employee':
+      default:
+        return '/employee-dashboard';
+    }
   };
 
+  // --- Auth initialization ---
   useEffect(() => {
     const initializeAuth = async () => {
       try {
@@ -121,7 +131,7 @@ export const AuthProvider = ({ children }) => {
 
     initializeAuth();
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
       const authUser = session?.user ?? null;
       setUser(authUser);
 
@@ -136,15 +146,17 @@ export const AuthProvider = ({ children }) => {
     return () => subscription.unsubscribe();
   }, []);
 
+  // --- Context value ---
   const value = {
     user,
     profile,
     loading,
     signOut: () => supabase.auth.signOut(),
     refreshProfile: () => user && fetchUserProfile(user),
-    getDashboardRoute
+    getDashboardRoute,
   };
 
+  // ✅ Only one return statement here
   return (
     <AuthContext.Provider value={value}>
       {children}
