@@ -42,11 +42,13 @@ import {
   DownloadOutlined,
   FileTextOutlined,
   PieChartOutlined,
+  ReloadOutlined,
   SettingOutlined,
   MessageOutlined,
   FundOutlined,
   CheckOutlined,
   CloseOutlined,
+
   ExclamationCircleOutlined
 } from '@ant-design/icons';
 import { supabase } from '../../services/supabase';
@@ -1355,7 +1357,7 @@ const ManagerDashboard = () => {
               extra={
                 <Button 
                   type="primary" 
-                  icon={<RefreshOutlined />}
+                  icon={<ReloadOutlined />}
                   onClick={fetchLeaveRequests}
                 >
                   Refresh
@@ -1377,7 +1379,7 @@ const ManagerDashboard = () => {
               extra={
                 <Button 
                   type="primary" 
-                  icon={<RefreshOutlined />}
+                  icon={<ReloadOutlined />}
                   onClick={fetchLoanRequests}
                 >
                   Refresh

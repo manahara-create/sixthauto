@@ -46,6 +46,7 @@ import {
   ClockCircleOutlined,
   ArrowUpOutlined,
   MailOutlined,
+  MinusCircleOutlined,
   PhoneOutlined,
   PlusOutlined,
   EditOutlined,
