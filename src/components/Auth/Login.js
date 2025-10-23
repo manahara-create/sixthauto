@@ -326,9 +326,6 @@ const Login = () => {
           </Text>
         </div>
 
-        {/* Demo Login Buttons */}
-        <DemoLoginButtons />
-
         <Divider style={{ 
           margin: '20px 0', 
           borderColor: '#bdc3c7',
@@ -486,24 +483,6 @@ const Login = () => {
                   }}
                 >
                   Clear
-                </Button>
-                
-                <Button
-                  onClick={() => handleDemoLogin('employee')}
-                  block
-                  size="large"
-                  disabled={loading}
-                  style={{
-                    height: '52px',
-                    fontSize: '17px',
-                    fontWeight: '500',
-                    background: '#f39c12',
-                    border: '2px solid #e67e22',
-                    color: 'white',
-                    borderRadius: '10px'
-                  }}
-                >
-                  Demo Login
                 </Button>
               </div>
             </div>
