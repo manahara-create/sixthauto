@@ -153,25 +153,25 @@ const CEODashboard = () => {
     } catch (error) {
       console.error('Error fetching strategic goals:', error);
       const mockGoals = [
-        { 
-          goal_id: 1, 
-          goal_name: 'Revenue Growth', 
-          description: 'Achieve 20% revenue growth YoY', 
-          current_value: 15, 
-          target_value: 20, 
-          achieved: false, 
-          quarter: 1, 
-          year: 2024 
+        {
+          goal_id: 1,
+          goal_name: 'Revenue Growth',
+          description: 'Achieve 20% revenue growth YoY',
+          current_value: 15,
+          target_value: 20,
+          achieved: false,
+          quarter: 1,
+          year: 2024
         },
-        { 
-          goal_id: 2, 
-          goal_name: 'Market Expansion', 
-          description: 'Expand to 2 new international markets', 
-          current_value: 1, 
-          target_value: 2, 
-          achieved: false, 
-          quarter: 2, 
-          year: 2024 
+        {
+          goal_id: 2,
+          goal_name: 'Market Expansion',
+          description: 'Expand to 2 new international markets',
+          current_value: 1,
+          target_value: 2,
+          achieved: false,
+          quarter: 2,
+          year: 2024
         }
       ];
       setStrategicGoals(mockGoals);
@@ -205,6 +205,8 @@ const CEODashboard = () => {
       console.error('Error fetching financial overview:', error);
     }
   };
+
+
 
   const fetchPendingApprovals = async () => {
     try {
@@ -304,7 +306,7 @@ const CEODashboard = () => {
       if (type === 'leave') {
         const { error } = await supabase
           .from('employeeleave')
-          .update({ 
+          .update({
             leavestatus: status,
             approvedby: profile.empid
           })
@@ -314,7 +316,7 @@ const CEODashboard = () => {
       } else if (type === 'loan') {
         const { error } = await supabase
           .from('loanrequest')
-          .update({ 
+          .update({
             status: status,
             processedby: profile.empid,
             processedat: dayjs().format('YYYY-MM-DD HH:mm:ss')
@@ -464,6 +466,8 @@ const CEODashboard = () => {
     }
   };
 
+
+
   // Report Generation Functions (Similar to Manager Dashboard but for all employees)
   const generateReport = async (values) => {
     try {
@@ -476,7 +480,7 @@ const CEODashboard = () => {
       };
 
       let reportData = {};
-      
+
       switch (values.report_type) {
         case 'salary':
           reportData = await generateSalaryReport(reportConfig);
@@ -538,24 +542,7 @@ const CEODashboard = () => {
     }
   };
 
-  const generateSalaryReport = async (config) => {
-    const { data } = await supabase
-      .from('salary')
-      .select(`
-        *,
-        employee:empid (first_name, last_name, department)
-      `)
-      .eq('empid', config.employee_id || allEmployees.map(e => e.empid))
-      .gte('salarydate', dayjs().startOf(config.period).format('YYYY-MM-DD'))
-      .lte('salarydate', dayjs().endOf(config.period).format('YYYY-MM-DD'));
 
-    const pieData = data?.map(item => ({
-      type: `${item.employee.first_name} ${item.employee.last_name}`,
-      value: item.totalsalary
-    })) || [];
-
-    return { rawData: data, chartData: pieData, type: 'salary' };
-  };
 
   const generateFinancialReport = async (config) => {
     const { data } = await supabase
@@ -570,6 +557,37 @@ const CEODashboard = () => {
     })) || [];
 
     return { rawData: data, chartData, type: 'financial' };
+  };
+
+  const generateSalaryReport = async (config) => {
+    let query = supabase
+      .from('salary')
+      .select(`
+      *,
+      employee:empid (first_name, last_name, department)
+    `)
+      .gte('salarydate', dayjs().startOf(config.period).format('YYYY-MM-DD'))
+      .lte('salarydate', dayjs().endOf(config.period).format('YYYY-MM-DD'));
+
+    // Only filter by employee_id if provided
+    if (config.employee_id) {
+      query = query.eq('empid', config.employee_id);
+    } else {
+      // If no specific employee, get all active employees
+      const employeeIds = allEmployees.map(e => e.empid);
+      if (employeeIds.length > 0) {
+        query = query.in('empid', employeeIds);
+      }
+    }
+
+    const { data } = await query;
+
+    const pieData = data?.map(item => ({
+      type: `${item.employee?.first_name} ${item.employee?.last_name}`,
+      value: item.totalsalary
+    })) || [];
+
+    return { rawData: data, chartData: pieData, type: 'salary' };
   };
 
   const generatePerformanceReport = async (config) => {
@@ -647,7 +665,7 @@ const CEODashboard = () => {
       title: 'Employee',
       dataIndex: ['employee', 'first_name'],
       key: 'employee',
-      render: (text, record) => 
+      render: (text, record) =>
         `${record.employee?.first_name} ${record.employee?.last_name}`
     },
     {
@@ -671,17 +689,17 @@ const CEODashboard = () => {
       key: 'actions',
       render: (_, record) => (
         <Space>
-          <Button 
-            type="primary" 
-            size="small" 
+          <Button
+            type="primary"
+            size="small"
             icon={<CheckCircleOutlined />}
             onClick={() => handleApproval(record.type, record.leaveid || record.loanrequestid, 'approved')}
           >
             Approve
           </Button>
-          <Button 
-            danger 
-            size="small" 
+          <Button
+            danger
+            size="small"
             icon={<CloseCircleOutlined />}
             onClick={() => handleApproval(record.type, record.leaveid || record.loanrequestid, 'rejected')}
           >
@@ -729,8 +747,8 @@ const CEODashboard = () => {
   return (
     <div style={{ padding: '16px', maxWidth: '1400px', margin: '0 auto' }}>
       {/* Header */}
-      <Card size="small" style={{ 
-        marginBottom: 16, 
+      <Card size="small" style={{
+        marginBottom: 16,
         background: 'linear-gradient(135deg, #fa541c 0%, #d4380d 100%)',
         border: 'none'
       }}>
@@ -820,8 +838,8 @@ const CEODashboard = () => {
             <Row gutter={[16, 16]}>
               {/* Strategic Goals */}
               <Col xs={24} lg={12}>
-                <Card 
-                  title="Strategic Goals" 
+                <Card
+                  title="Strategic Goals"
                   extra={<TrophyOutlined style={{ color: '#faad14' }} />}
                   loading={loading}
                 >
@@ -834,8 +852,8 @@ const CEODashboard = () => {
                           description={
                             <Space direction="vertical" size={0}>
                               <Text>{goal.description}</Text>
-                              <Progress 
-                                percent={Math.round((goal.current_value / goal.target_value) * 100)} 
+                              <Progress
+                                percent={Math.round((goal.current_value / goal.target_value) * 100)}
                                 status={goal.achieved ? 'success' : 'active'}
                                 style={{ marginTop: 8 }}
                               />
@@ -868,11 +886,11 @@ const CEODashboard = () => {
 
               {/* Pending Approvals */}
               <Col xs={24} lg={12}>
-                <Card 
-                  title="Pending Approvals" 
+                <Card
+                  title="Pending Approvals"
                   extra={
-                    <Button 
-                      type="link" 
+                    <Button
+                      type="link"
                       icon={<EyeOutlined />}
                       onClick={() => setActiveTab('approvals')}
                     >
@@ -897,7 +915,7 @@ const CEODashboard = () => {
                       <Card size="small" hoverable>
                         <Space direction="vertical" style={{ width: '100%' }}>
                           <Text strong>Market Share</Text>
-                          <Statistic value={financialOverview.marketShare} suffix="%" 
+                          <Statistic value={financialOverview.marketShare} suffix="%"
                             valueStyle={{ color: '#1890ff', fontSize: '24px' }} />
                           <Text type="secondary">+2.3% from last quarter</Text>
                         </Space>
@@ -907,7 +925,7 @@ const CEODashboard = () => {
                       <Card size="small" hoverable>
                         <Space direction="vertical" style={{ width: '100%' }}>
                           <Text strong>Employee Retention</Text>
-                          <Statistic value={financialOverview.employeeRetention} suffix="%" 
+                          <Statistic value={financialOverview.employeeRetention} suffix="%"
                             valueStyle={{ color: '#52c41a', fontSize: '24px' }} />
                           <Text type="secondary">Industry average: 88%</Text>
                         </Space>
@@ -917,7 +935,7 @@ const CEODashboard = () => {
                       <Card size="small" hoverable>
                         <Space direction="vertical" style={{ width: '100%' }}>
                           <Text strong>Revenue Growth</Text>
-                          <Statistic value={financialOverview.revenueGrowth} suffix="%" 
+                          <Statistic value={financialOverview.revenueGrowth} suffix="%"
                             valueStyle={{ color: '#fa8c16', fontSize: '24px' }} />
                           <Text type="secondary">YoY growth rate</Text>
                         </Space>
@@ -927,7 +945,7 @@ const CEODashboard = () => {
                       <Card size="small" hoverable>
                         <Space direction="vertical" style={{ width: '100%' }}>
                           <Text strong>Operating Margin</Text>
-                          <Statistic value={financialOverview.operatingMargin} suffix="%" 
+                          <Statistic value={financialOverview.operatingMargin} suffix="%"
                             valueStyle={{ color: '#722ed1', fontSize: '24px' }} />
                           <Text type="secondary">Above target: 25%</Text>
                         </Space>
@@ -944,8 +962,8 @@ const CEODashboard = () => {
             <Card
               title="Pending Approvals"
               extra={
-                <Button 
-                  type="primary" 
+                <Button
+                  type="primary"
                   icon={<DownloadOutlined />}
                   onClick={() => setIsReportModalVisible(true)}
                 >
@@ -969,8 +987,8 @@ const CEODashboard = () => {
                   title="Executive Reports"
                   extra={
                     <Space>
-                      <Button 
-                        type="primary" 
+                      <Button
+                        type="primary"
                         icon={<PlusOutlined />}
                         onClick={() => setIsReportModalVisible(true)}
                       >
@@ -991,7 +1009,7 @@ const CEODashboard = () => {
                             { type: 'staff', name: 'Staff Report', icon: <TeamOutlined /> },
                             { type: 'kpi', name: 'KPI Report', icon: <LineChartOutlined /> }
                           ].map(report => (
-                            <Button 
+                            <Button
                               key={report.type}
                               icon={report.icon}
                               block
@@ -1063,11 +1081,11 @@ const CEODashboard = () => {
           <TabPane tab="Management" key="management">
             <Row gutter={[16, 16]}>
               <Col span={12}>
-                <Card 
+                <Card
                   title="Employee Management"
                   extra={
                     <Space>
-                      <Button 
+                      <Button
                         icon={<MessageOutlined />}
                         onClick={() => {
                           setActiveTab('employees');
@@ -1076,8 +1094,8 @@ const CEODashboard = () => {
                       >
                         Give Feedback
                       </Button>
-                      <Button 
-                        type="primary" 
+                      <Button
+                        type="primary"
                         icon={<UserAddOutlined />}
                         onClick={() => setIsPromotionModalVisible(true)}
                       >
@@ -1091,8 +1109,8 @@ const CEODashboard = () => {
                     renderItem={employee => (
                       <List.Item
                         actions={[
-                          <Button 
-                            type="link" 
+                          <Button
+                            type="link"
                             icon={<MessageOutlined />}
                             onClick={() => {
                               setSelectedEmployee(employee);
@@ -1101,8 +1119,8 @@ const CEODashboard = () => {
                           >
                             Feedback
                           </Button>,
-                          <Button 
-                            type="link" 
+                          <Button
+                            type="link"
                             icon={<CrownOutlined />}
                             onClick={() => {
                               setSelectedEmployee(employee);
@@ -1129,11 +1147,11 @@ const CEODashboard = () => {
                 </Card>
               </Col>
               <Col span={12}>
-                <Card 
+                <Card
                   title="Meeting Management"
                   extra={
-                    <Button 
-                      type="primary" 
+                    <Button
+                      type="primary"
                       icon={<PlusOutlined />}
                       onClick={() => setIsMeetingModalVisible(true)}
                     >
@@ -1341,9 +1359,9 @@ const CEODashboard = () => {
         }}
         onOk={() => promotionForm.submit()}
       >
-        <Form 
-          form={promotionForm} 
-          layout="vertical" 
+        <Form
+          form={promotionForm}
+          layout="vertical"
           onFinish={promoteEmployee}
           initialValues={{
             employee_id: selectedEmployee?.empid,

@@ -35,8 +35,6 @@ const DashboardRouter = () => {
   switch (profile.role) {
     case 'ceo':
       return <CEODashboard />;
-    case 'admin':
-      return <AdminDashboard />;
     case 'hr':
       return <HRDashboard />;
     case 'manager':
@@ -149,7 +147,6 @@ function AppContent() {
         >
           {/* Dashboard Routes */}
           <Route path="ceo-dashboard" element={<DashboardRouter />} />
-          <Route path="admin-dashboard" element={<DashboardRouter />} />
           <Route path="hr-dashboard" element={<DashboardRouter />} />
           <Route path="manager-dashboard" element={<DashboardRouter />} />
           <Route path="employee-dashboard" element={<DashboardRouter />} />
