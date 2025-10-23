@@ -1,97 +1,83 @@
 import { supabase } from './supabase';
 
-export class FileService {
-  static async uploadFile(file, folder = 'documents') {
-    try {
-      const fileExt = file.name.split('.').pop();
-      const fileName = `${Math.random().toString(36).substring(2)}_${Date.now()}.${fileExt}`;
-      const filePath = `${folder}/${fileName}`;
-
-      const { data, error } = await supabase.storage
-        .from('user_details')
-        .upload(filePath, file);
-
-      if (error) throw error;
-
-      // Get public URL
-      const { data: { publicUrl } } = supabase.storage
-        .from('user_details')
-        .getPublicUrl(filePath);
-
-      return {
-        success: true,
-        filePath,
-        publicUrl,
-        fileName: file.name
-      };
-    } catch (error) {
-      console.error('Error uploading file:', error);
-      return {
-        success: false,
-        error: error.message
-      };
-    }
+class FileService {
+  static async listEmployeeFiles(empid) {
+    const { data, error } = await supabase
+      .from('employee_documents')
+      .select('*')
+      .eq('empid', empid)
+      .order('uploaded_at', { ascending: false });
+    
+    if (error) throw error;
+    return data;
   }
 
-  static async uploadAvatar(file, employeeId) {
-    try {
-      const fileExt = file.name.split('.').pop();
-      const fileName = `avatar_${employeeId}_${Date.now()}.${fileExt}`;
-      const filePath = `avatars/${fileName}`;
+  static async uploadEmployeeDocument(file, empid, documentType, documentName) {
+    const fileExt = file.name.split('.').pop();
+    const fileName = `${empid}_${Date.now()}.${fileExt}`;
+    const filePath = `employee-documents/${empid}/${fileName}`;
 
-      const { data, error } = await supabase.storage
-        .from('user_details')
-        .upload(filePath, file, {
-          cacheControl: '3600',
-          upsert: true
-        });
+    // Upload file to Supabase Storage
+    const { data: uploadData, error: uploadError } = await supabase.storage
+      .from('employee-documents')
+      .upload(filePath, file);
 
-      if (error) throw error;
+    if (uploadError) throw uploadError;
 
-      // Get public URL
-      const { data: { publicUrl } } = supabase.storage
-        .from('user_details')
-        .getPublicUrl(filePath);
+    // Get public URL
+    const { data: { publicUrl } } = supabase.storage
+      .from('employee-documents')
+      .getPublicUrl(filePath);
 
-      return {
-        success: true,
-        filePath,
-        publicUrl
-      };
-    } catch (error) {
-      console.error('Error uploading avatar:', error);
-      return {
-        success: false,
-        error: error.message
-      };
-    }
+    // Save document record to database
+    const { data, error } = await supabase
+      .from('employee_documents')
+      .insert([{
+        empid: empid,
+        document_name: documentName,
+        document_type: documentType,
+        file_path: publicUrl,
+        file_size: file.size,
+        uploaded_by: empid
+      }])
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
   }
 
-  static async deleteFile(filePath) {
-    try {
-      const { error } = await supabase.storage
-        .from('user_details')
-        .remove([filePath]);
+  static async deleteEmployeeDocument(documentId, empid) {
+    // First get the document to find file path
+    const { data: document, error: fetchError } = await supabase
+      .from('employee_documents')
+      .select('*')
+      .eq('id', documentId)
+      .eq('empid', empid)
+      .single();
 
-      if (error) throw error;
-      return { success: true };
-    } catch (error) {
-      console.error('Error deleting file:', error);
-      return { success: false, error: error.message };
-    }
-  }
+    if (fetchError) throw fetchError;
 
-  static async getFileUrl(filePath) {
-    try {
-      const { data: { publicUrl } } = supabase.storage
-        .from('user_details')
-        .getPublicUrl(filePath);
+    // Extract file path from URL for storage deletion
+    const filePath = document.file_path.split('/').pop();
+    const fullPath = `employee-documents/${empid}/${filePath}`;
 
-      return publicUrl;
-    } catch (error) {
-      console.error('Error getting file URL:', error);
-      return null;
-    }
+    // Delete from storage
+    const { error: storageError } = await supabase.storage
+      .from('employee-documents')
+      .remove([fullPath]);
+
+    if (storageError) throw storageError;
+
+    // Delete from database
+    const { error } = await supabase
+      .from('employee_documents')
+      .delete()
+      .eq('id', documentId)
+      .eq('empid', empid);
+
+    if (error) throw error;
+    return { success: true };
   }
 }
 

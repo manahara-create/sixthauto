@@ -24,7 +24,8 @@ import {
   Upload,
   Divider,
   Tooltip,
-  Popconfirm
+  Popconfirm,
+  Descriptions
 } from 'antd';
 import {
   TeamOutlined,
@@ -43,7 +44,10 @@ import {
   PieChartOutlined,
   SettingOutlined,
   MessageOutlined,
-  FundOutlined
+  FundOutlined,
+  CheckOutlined,
+  CloseOutlined,
+  ExclamationCircleOutlined
 } from '@ant-design/icons';
 import { supabase } from '../../services/supabase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -64,14 +68,22 @@ const ManagerDashboard = () => {
   const [teamPerformance, setTeamPerformance] = useState({});
   const [departmentStats, setDepartmentStats] = useState({});
   const [reports, setReports] = useState([]);
+  const [leaveRequests, setLeaveRequests] = useState([]);
+  const [loanRequests, setLoanRequests] = useState([]);
   const [isTaskModalVisible, setIsTaskModalVisible] = useState(false);
   const [isFeedbackModalVisible, setIsFeedbackModalVisible] = useState(false);
   const [isReportModalVisible, setIsReportModalVisible] = useState(false);
+  const [isLeaveModalVisible, setIsLeaveModalVisible] = useState(false);
+  const [isLoanModalVisible, setIsLoanModalVisible] = useState(false);
   const [selectedEmployee, setSelectedEmployee] = useState(null);
+  const [selectedLeave, setSelectedLeave] = useState(null);
+  const [selectedLoan, setSelectedLoan] = useState(null);
   const [reportData, setReportData] = useState({});
   const [taskForm] = Form.useForm();
   const [feedbackForm] = Form.useForm();
   const [reportForm] = Form.useForm();
+  const [leaveForm] = Form.useForm();
+  const [loanForm] = Form.useForm();
 
   useEffect(() => {
     initializeDashboard();
@@ -85,7 +97,9 @@ const ManagerDashboard = () => {
         fetchTeamTasks(),
         fetchTeamPerformance(),
         fetchDepartmentStats(),
-        fetchRecentReports()
+        fetchRecentReports(),
+        fetchLeaveRequests(),
+        fetchLoanRequests()
       ]);
     } catch (error) {
       console.error('Error initializing manager dashboard:', error);
@@ -190,6 +204,46 @@ const ManagerDashboard = () => {
     }
   };
 
+  const fetchLeaveRequests = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('employeeleave')
+        .select(`
+          *,
+          employee:empid (first_name, last_name, email),
+          leavetype:leavetypeid (leavetype)
+        `)
+        .in('empid', teamMembers.map(member => member.empid))
+        .eq('leavestatus', 'pending')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setLeaveRequests(data || []);
+    } catch (error) {
+      console.error('Error fetching leave requests:', error);
+    }
+  };
+
+  const fetchLoanRequests = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('loanrequest')
+        .select(`
+          *,
+          employee:empid (first_name, last_name, email, basicsalary),
+          loantype:loantypeid (loantype)
+        `)
+        .in('empid', teamMembers.map(member => member.empid))
+        .eq('status', 'pending')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setLoanRequests(data || []);
+    } catch (error) {
+      console.error('Error fetching loan requests:', error);
+    }
+  };
+
   // Task Management Functions
   const assignTask = async (values) => {
     try {
@@ -200,10 +254,28 @@ const ManagerDashboard = () => {
           assignee_id: values.assignee_id,
           created_by: profile.empid,
           due_date: values.due_date.format('YYYY-MM-DD'),
-          status: 'pending'
+          status: 'pending',
+          created_at: dayjs().format('YYYY-MM-DD HH:mm:ss'),
+          updated_at: dayjs().format('YYYY-MM-DD HH:mm:ss')
         }]);
 
       if (error) throw error;
+      
+      // Log the operation
+      await supabase
+        .from('manager_operations')
+        .insert([{
+          operation: 'assign_task',
+          record_id: data?.[0]?.id,
+          manager_id: profile.empid,
+          details: {
+            task_title: values.title,
+            assignee_id: values.assignee_id,
+            due_date: values.due_date.format('YYYY-MM-DD')
+          },
+          operation_time: dayjs().format('YYYY-MM-DD HH:mm:ss')
+        }]);
+
       message.success('Task assigned successfully!');
       setIsTaskModalVisible(false);
       taskForm.resetFields();
@@ -216,7 +288,6 @@ const ManagerDashboard = () => {
 
   const giveFeedback = async (values) => {
     try {
-      // Store feedback in manager_operations table
       const { data, error } = await supabase
         .from('manager_operations')
         .insert([{
@@ -228,7 +299,8 @@ const ManagerDashboard = () => {
             rating: values.rating,
             type: values.feedback_type,
             date: dayjs().format('YYYY-MM-DD')
-          }
+          },
+          operation_time: dayjs().format('YYYY-MM-DD HH:mm:ss')
         }]);
 
       if (error) throw error;
@@ -239,6 +311,84 @@ const ManagerDashboard = () => {
     } catch (error) {
       console.error('Error submitting feedback:', error);
       message.error('Failed to submit feedback');
+    }
+  };
+
+  // Leave Management Functions
+  const handleLeaveAction = async (leaveId, action, remarks = '') => {
+    try {
+      const { error } = await supabase
+        .from('employeeleave')
+        .update({
+          leavestatus: action,
+          approvedby: profile.empid,
+          updated_at: dayjs().format('YYYY-MM-DD HH:mm:ss')
+        })
+        .eq('leaveid', leaveId);
+
+      if (error) throw error;
+
+      // Log the operation
+      await supabase
+        .from('manager_operations')
+        .insert([{
+          operation: `${action}_leave`,
+          record_id: leaveId,
+          manager_id: profile.empid,
+          details: {
+            action: action,
+            remarks: remarks,
+            date: dayjs().format('YYYY-MM-DD')
+          },
+          operation_time: dayjs().format('YYYY-MM-DD HH:mm:ss')
+        }]);
+
+      message.success(`Leave request ${action} successfully!`);
+      setIsLeaveModalVisible(false);
+      setSelectedLeave(null);
+      fetchLeaveRequests();
+    } catch (error) {
+      console.error('Error processing leave request:', error);
+      message.error('Failed to process leave request');
+    }
+  };
+
+  // Loan Management Functions
+  const handleLoanAction = async (loanId, action, remarks = '') => {
+    try {
+      const { error } = await supabase
+        .from('loanrequest')
+        .update({
+          status: action,
+          processedby: profile.empid,
+          processedat: dayjs().format('YYYY-MM-DD HH:mm:ss')
+        })
+        .eq('loanrequestid', loanId);
+
+      if (error) throw error;
+
+      // Log the operation
+      await supabase
+        .from('manager_operations')
+        .insert([{
+          operation: `${action}_loan`,
+          record_id: loanId,
+          manager_id: profile.empid,
+          details: {
+            action: action,
+            remarks: remarks,
+            date: dayjs().format('YYYY-MM-DD')
+          },
+          operation_time: dayjs().format('YYYY-MM-DD HH:mm:ss')
+        }]);
+
+      message.success(`Loan request ${action} successfully!`);
+      setIsLoanModalVisible(false);
+      setSelectedLoan(null);
+      fetchLoanRequests();
+    } catch (error) {
+      console.error('Error processing loan request:', error);
+      message.error('Failed to process loan request');
     }
   };
 
@@ -283,6 +433,9 @@ const ManagerDashboard = () => {
         case 'staff':
           reportData = await generateStaffReport(reportConfig);
           break;
+        case 'performance':
+          reportData = await generatePerformanceReport(reportConfig);
+          break;
         default:
           throw new Error('Unknown report type');
       }
@@ -296,7 +449,8 @@ const ManagerDashboard = () => {
           format: values.format,
           status: 'completed',
           created_by: profile.empid,
-          config: reportConfig
+          config: reportConfig,
+          created_at: dayjs().format('YYYY-MM-DD HH:mm:ss')
         }])
         .select();
 
@@ -304,6 +458,8 @@ const ManagerDashboard = () => {
 
       setReportData(reportData);
       message.success('Report generated successfully!');
+      setIsReportModalVisible(false);
+      reportForm.resetFields();
       fetchRecentReports();
     } catch (error) {
       console.error('Error generating report:', error);
@@ -312,15 +468,18 @@ const ManagerDashboard = () => {
   };
 
   const generateSalaryReport = async (config) => {
+    const startDate = dayjs().startOf(config.period).format('YYYY-MM-DD');
+    const endDate = dayjs().endOf(config.period).format('YYYY-MM-DD');
+
     const { data } = await supabase
       .from('salary')
       .select(`
         *,
         employee:empid (first_name, last_name)
       `)
-      .eq('empid', config.employee_id || teamMembers.map(m => m.empid))
-      .gte('salarydate', dayjs().startOf(config.period).format('YYYY-MM-DD'))
-      .lte('salarydate', dayjs().endOf(config.period).format('YYYY-MM-DD'));
+      .in('empid', config.employee_id ? [config.employee_id] : teamMembers.map(m => m.empid))
+      .gte('salarydate', startDate)
+      .lte('salarydate', endDate);
 
     const pieData = data?.map(item => ({
       type: `${item.employee.first_name} ${item.employee.last_name}`,
@@ -331,15 +490,18 @@ const ManagerDashboard = () => {
   };
 
   const generateAttendanceReport = async (config) => {
+    const startDate = dayjs().startOf(config.period).format('YYYY-MM-DD');
+    const endDate = dayjs().endOf(config.period).format('YYYY-MM-DD');
+
     const { data } = await supabase
       .from('attendance')
       .select(`
         *,
         employee:empid (first_name, last_name)
       `)
-      .eq('empid', config.employee_id || teamMembers.map(m => m.empid))
-      .gte('date', dayjs().startOf(config.period).format('YYYY-MM-DD'))
-      .lte('date', dayjs().endOf(config.period).format('YYYY-MM-DD'));
+      .in('empid', config.employee_id ? [config.employee_id] : teamMembers.map(m => m.empid))
+      .gte('date', startDate)
+      .lte('date', endDate);
 
     const statusCount = data?.reduce((acc, item) => {
       acc[item.status] = (acc[item.status] || 0) + 1;
@@ -355,6 +517,9 @@ const ManagerDashboard = () => {
   };
 
   const generateLeaveReport = async (config) => {
+    const startDate = dayjs().startOf(config.period).format('YYYY-MM-DD');
+    const endDate = dayjs().endOf(config.period).format('YYYY-MM-DD');
+
     const { data } = await supabase
       .from('employeeleave')
       .select(`
@@ -362,9 +527,9 @@ const ManagerDashboard = () => {
         employee:empid (first_name, last_name),
         leavetype:leavetypeid (leavetype)
       `)
-      .eq('empid', config.employee_id || teamMembers.map(m => m.empid))
-      .gte('leavefromdate', dayjs().startOf(config.period).format('YYYY-MM-DD'))
-      .lte('leavetodate', dayjs().endOf(config.period).format('YYYY-MM-DD'));
+      .in('empid', config.employee_id ? [config.employee_id] : teamMembers.map(m => m.empid))
+      .gte('leavefromdate', startDate)
+      .lte('leavetodate', endDate);
 
     const leaveTypeCount = data?.reduce((acc, item) => {
       const type = item.leavetype?.leavetype || 'Unknown';
@@ -381,15 +546,18 @@ const ManagerDashboard = () => {
   };
 
   const generateKPIReport = async (config) => {
+    const startDate = dayjs().startOf(config.period).format('YYYY-MM-DD');
+    const endDate = dayjs().endOf(config.period).format('YYYY-MM-DD');
+
     const { data } = await supabase
       .from('kpi')
       .select(`
         *,
         employee:empid (first_name, last_name)
       `)
-      .eq('empid', config.employee_id || teamMembers.map(m => m.empid))
-      .gte('calculatedate', dayjs().startOf(config.period).format('YYYY-MM-DD'))
-      .lte('calculatedate', dayjs().endOf(config.period).format('YYYY-MM-DD'));
+      .in('empid', config.employee_id ? [config.employee_id] : teamMembers.map(m => m.empid))
+      .gte('calculatedate', startDate)
+      .lte('calculatedate', endDate);
 
     const kpiData = data?.map(item => ({
       type: `${item.employee.first_name} ${item.employee.last_name}`,
@@ -400,15 +568,18 @@ const ManagerDashboard = () => {
   };
 
   const generateOTReport = async (config) => {
+    const startDate = dayjs().startOf(config.period).format('YYYY-MM-DD');
+    const endDate = dayjs().endOf(config.period).format('YYYY-MM-DD');
+
     const { data } = await supabase
       .from('ot')
       .select(`
         *,
         employee:empid (first_name, last_name)
       `)
-      .eq('empid', config.employee_id || teamMembers.map(m => m.empid))
-      .gte('created_at', dayjs().startOf(config.period).format('YYYY-MM-DD'))
-      .lte('created_at', dayjs().endOf(config.period).format('YYYY-MM-DD'));
+      .in('empid', config.employee_id ? [config.employee_id] : teamMembers.map(m => m.empid))
+      .gte('created_at', startDate)
+      .lte('created_at', endDate);
 
     const otData = data?.map(item => ({
       type: `${item.employee.first_name} ${item.employee.last_name}`,
@@ -418,16 +589,42 @@ const ManagerDashboard = () => {
     return { rawData: data, chartData: otData, type: 'ot' };
   };
 
+  const generatePerformanceReport = async (config) => {
+    const startDate = dayjs().startOf(config.period).format('YYYY-MM-DD');
+    const endDate = dayjs().endOf(config.period).format('YYYY-MM-DD');
+
+    const { data } = await supabase
+      .from('performance_rating')
+      .select(`
+        *,
+        employee:empid (first_name, last_name),
+        evaluator:evaluator_id (first_name, last_name)
+      `)
+      .in('empid', config.employee_id ? [config.employee_id] : teamMembers.map(m => m.empid))
+      .gte('review_period_start', startDate)
+      .lte('review_period_end', endDate);
+
+    const performanceData = data?.map(item => ({
+      type: `${item.employee.first_name} ${item.employee.last_name}`,
+      value: item.rate
+    })) || [];
+
+    return { rawData: data, chartData: performanceData, type: 'performance' };
+  };
+
   const generateIncrementReport = async (config) => {
+    const startDate = dayjs().startOf(config.period).format('YYYY-MM-DD');
+    const endDate = dayjs().endOf(config.period).format('YYYY-MM-DD');
+
     const { data } = await supabase
       .from('increment')
       .select(`
         *,
         employee:empid (first_name, last_name)
       `)
-      .eq('empid', config.employee_id || teamMembers.map(m => m.empid))
-      .gte('created_at', dayjs().startOf(config.period).format('YYYY-MM-DD'))
-      .lte('created_at', dayjs().endOf(config.period).format('YYYY-MM-DD'));
+      .in('empid', config.employee_id ? [config.employee_id] : teamMembers.map(m => m.empid))
+      .gte('created_at', startDate)
+      .lte('created_at', endDate);
 
     const incrementData = data?.map(item => ({
       type: `${item.employee.first_name} ${item.employee.last_name}`,
@@ -438,15 +635,18 @@ const ManagerDashboard = () => {
   };
 
   const generateNoPayReport = async (config) => {
+    const startDate = dayjs().startOf(config.period).format('YYYY-MM-DD');
+    const endDate = dayjs().endOf(config.period).format('YYYY-MM-DD');
+
     const { data } = await supabase
       .from('nopay')
       .select(`
         *,
         employee:empid (first_name, last_name)
       `)
-      .eq('empid', config.employee_id || teamMembers.map(m => m.empid))
-      .gte('created_at', dayjs().startOf(config.period).format('YYYY-MM-DD'))
-      .lte('created_at', dayjs().endOf(config.period).format('YYYY-MM-DD'));
+      .in('empid', config.employee_id ? [config.employee_id] : teamMembers.map(m => m.empid))
+      .gte('created_at', startDate)
+      .lte('created_at', endDate);
 
     const nopayData = data?.map(item => ({
       type: `${item.employee.first_name} ${item.employee.last_name}`,
@@ -457,6 +657,9 @@ const ManagerDashboard = () => {
   };
 
   const generateLoanReport = async (config) => {
+    const startDate = dayjs().startOf(config.period).format('YYYY-MM-DD');
+    const endDate = dayjs().endOf(config.period).format('YYYY-MM-DD');
+
     const { data } = await supabase
       .from('loanrequest')
       .select(`
@@ -464,9 +667,9 @@ const ManagerDashboard = () => {
         employee:empid (first_name, last_name),
         loantype:loantypeid (loantype)
       `)
-      .eq('empid', config.employee_id || teamMembers.map(m => m.empid))
-      .gte('created_at', dayjs().startOf(config.period).format('YYYY-MM-DD'))
-      .lte('created_at', dayjs().endOf(config.period).format('YYYY-MM-DD'));
+      .in('empid', config.employee_id ? [config.employee_id] : teamMembers.map(m => m.empid))
+      .gte('created_at', startDate)
+      .lte('created_at', endDate);
 
     const loanTypeData = data?.reduce((acc, item) => {
       const type = item.loantype?.loantype || 'Unknown';
@@ -503,6 +706,10 @@ const ManagerDashboard = () => {
   };
 
   const renderPieChart = (data) => {
+    if (!data?.chartData?.length) {
+      return <div>No data available for chart</div>;
+    }
+
     const config = {
       data: data.chartData,
       angleField: 'value',
@@ -572,6 +779,129 @@ const ManagerDashboard = () => {
           >
             <Button type="link" danger icon={<DeleteOutlined />} size="small">Delete</Button>
           </Popconfirm>
+        </Space>
+      )
+    }
+  ];
+
+  const leaveColumns = [
+    {
+      title: 'Employee',
+      dataIndex: ['employee', 'first_name'],
+      key: 'employee',
+      render: (text, record) => 
+        `${record.employee?.first_name} ${record.employee?.last_name}`
+    },
+    {
+      title: 'Leave Type',
+      dataIndex: ['leavetype', 'leavetype'],
+      key: 'leavetype'
+    },
+    {
+      title: 'From Date',
+      dataIndex: 'leavefromdate',
+      key: 'leavefromdate',
+      render: (date) => dayjs(date).format('DD/MM/YYYY')
+    },
+    {
+      title: 'To Date',
+      dataIndex: 'leavetodate',
+      key: 'leavetodate',
+      render: (date) => dayjs(date).format('DD/MM/YYYY')
+    },
+    {
+      title: 'Reason',
+      dataIndex: 'leavereason',
+      key: 'reason'
+    },
+    {
+      title: 'Status',
+      dataIndex: 'leavestatus',
+      key: 'status',
+      render: (status) => (
+        <Tag color={status === 'approved' ? 'green' : status === 'rejected' ? 'red' : 'orange'}>
+          {status}
+        </Tag>
+      )
+    },
+    {
+      title: 'Actions',
+      key: 'actions',
+      render: (_, record) => (
+        <Space>
+          <Button 
+            type="link" 
+            icon={<CheckOutlined />} 
+            size="small"
+            onClick={() => {
+              setSelectedLeave(record);
+              setIsLeaveModalVisible(true);
+            }}
+          >
+            Review
+          </Button>
+        </Space>
+      )
+    }
+  ];
+
+  const loanColumns = [
+    {
+      title: 'Employee',
+      dataIndex: ['employee', 'first_name'],
+      key: 'employee',
+      render: (text, record) => 
+        `${record.employee?.first_name} ${record.employee?.last_name}`
+    },
+    {
+      title: 'Loan Type',
+      dataIndex: ['loantype', 'loantype'],
+      key: 'loantype'
+    },
+    {
+      title: 'Amount',
+      dataIndex: 'amount',
+      key: 'amount',
+      render: (amount) => `$${amount?.toLocaleString()}`
+    },
+    {
+      title: 'Duration',
+      dataIndex: 'duration',
+      key: 'duration',
+      render: (duration) => `${duration} months`
+    },
+    {
+      title: 'Interest Rate',
+      dataIndex: 'interestrate',
+      key: 'interestrate',
+      render: (rate) => `${rate}%`
+    },
+    {
+      title: 'Status',
+      dataIndex: 'status',
+      key: 'status',
+      render: (status) => (
+        <Tag color={status === 'approved' ? 'green' : status === 'rejected' ? 'red' : 'orange'}>
+          {status}
+        </Tag>
+      )
+    },
+    {
+      title: 'Actions',
+      key: 'actions',
+      render: (_, record) => (
+        <Space>
+          <Button 
+            type="link" 
+            icon={<CheckOutlined />} 
+            size="small"
+            onClick={() => {
+              setSelectedLoan(record);
+              setIsLoanModalVisible(true);
+            }}
+          >
+            Review
+          </Button>
         </Space>
       )
     }
@@ -768,43 +1098,57 @@ const ManagerDashboard = () => {
                 </Card>
               </Col>
 
-              {/* Team Performance */}
+              {/* Pending Approvals */}
               <Col xs={24} lg={12}>
-                <Card title="Team Performance Metrics">
+                <Card 
+                  title="Pending Approvals" 
+                  extra={
+                    <Space>
+                      <Badge count={leaveRequests.length} offset={[-5, 0]}>
+                        <Button 
+                          type="link" 
+                          onClick={() => setActiveTab('leaves')}
+                        >
+                          Leaves
+                        </Button>
+                      </Badge>
+                      <Badge count={loanRequests.length} offset={[-5, 0]}>
+                        <Button 
+                          type="link" 
+                          onClick={() => setActiveTab('loans')}
+                        >
+                          Loans
+                        </Button>
+                      </Badge>
+                    </Space>
+                  }
+                >
                   <Row gutter={[16, 16]}>
                     <Col span={12}>
-                      <Card size="small" hoverable>
-                        <Space direction="vertical" style={{ width: '100%' }}>
-                          <Text strong>Project Completion</Text>
-                          <Progress percent={78} status="active" />
-                          <Text type="secondary">12/15 projects on time</Text>
+                      <Card 
+                        size="small" 
+                        hoverable
+                        onClick={() => setActiveTab('leaves')}
+                        style={{ cursor: 'pointer', textAlign: 'center' }}
+                      >
+                        <Space direction="vertical">
+                          <ExclamationCircleOutlined style={{ fontSize: '24px', color: '#faad14' }} />
+                          <Text strong>Leave Requests</Text>
+                          <Statistic value={leaveRequests.length} valueStyle={{ color: '#faad14' }} />
                         </Space>
                       </Card>
                     </Col>
                     <Col span={12}>
-                      <Card size="small" hoverable>
-                        <Space direction="vertical" style={{ width: '100%' }}>
-                          <Text strong>Quality Score</Text>
-                          <Progress percent={95} status="success" />
-                          <Text type="secondary">Client satisfaction</Text>
-                        </Space>
-                      </Card>
-                    </Col>
-                    <Col span={12}>
-                      <Card size="small" hoverable>
-                        <Space direction="vertical" style={{ width: '100%' }}>
-                          <Text strong>Budget Adherence</Text>
-                          <Progress percent={88} status="active" />
-                          <Text type="secondary">Within allocated budget</Text>
-                        </Space>
-                      </Card>
-                    </Col>
-                    <Col span={12}>
-                      <Card size="small" hoverable>
-                        <Space direction="vertical" style={{ width: '100%' }}>
-                          <Text strong>Team Satisfaction</Text>
-                          <Progress percent={teamPerformance.avgSatisfaction} status="active" />
-                          <Text type="secondary">Based on surveys</Text>
+                      <Card 
+                        size="small" 
+                        hoverable
+                        onClick={() => setActiveTab('loans')}
+                        style={{ cursor: 'pointer', textAlign: 'center' }}
+                      >
+                        <Space direction="vertical">
+                          <ExclamationCircleOutlined style={{ fontSize: '24px', color: '#faad14' }} />
+                          <Text strong>Loan Requests</Text>
+                          <Statistic value={loanRequests.length} valueStyle={{ color: '#faad14' }} />
                         </Space>
                       </Card>
                     </Col>
@@ -818,14 +1162,29 @@ const ManagerDashboard = () => {
                   <Row gutter={[16, 16]}>
                     <Col span={12}>
                       <Card size="small" hoverable style={{ textAlign: 'center', height: '100%' }}>
-                        <Button type="primary" icon={<CheckCircleOutlined />} block size="large">
+                        <Button 
+                          type="primary" 
+                          icon={<CheckCircleOutlined />} 
+                          block 
+                          size="large"
+                          onClick={() => setActiveTab('leaves')}
+                        >
                           Approve Leaves
                         </Button>
                       </Card>
                     </Col>
                     <Col span={12}>
                       <Card size="small" hoverable style={{ textAlign: 'center', height: '100%' }}>
-                        <Button icon={<BarChartOutlined />} block size="large">
+                        <Button 
+                          icon={<BarChartOutlined />} 
+                          block 
+                          size="large"
+                          onClick={() => {
+                            setActiveTab('reports');
+                            reportForm.setFieldsValue({ report_type: 'performance' });
+                            setIsReportModalVisible(true);
+                          }}
+                        >
                           Performance Review
                         </Button>
                       </Card>
@@ -847,8 +1206,13 @@ const ManagerDashboard = () => {
                     </Col>
                     <Col span={12}>
                       <Card size="small" hoverable style={{ textAlign: 'center', height: '100%' }}>
-                        <Button icon={<RocketOutlined />} block size="large">
-                          Set Goals
+                        <Button 
+                          icon={<RocketOutlined />} 
+                          block 
+                          size="large"
+                          onClick={() => setIsTaskModalVisible(true)}
+                        >
+                          Assign Tasks
                         </Button>
                       </Card>
                     </Col>
@@ -886,6 +1250,7 @@ const ManagerDashboard = () => {
                             { type: 'attendance', name: 'Attendance Report', icon: <CalendarOutlined /> },
                             { type: 'leave', name: 'Leave Report', icon: <UserOutlined /> },
                             { type: 'kpi', name: 'KPI Report', icon: <LineChartOutlined /> },
+                            { type: 'performance', name: 'Performance Report', icon: <BarChartOutlined /> },
                             { type: 'ot', name: 'OT Report', icon: <BarChartOutlined /> },
                             { type: 'staff', name: 'Staff Report', icon: <TeamOutlined /> }
                           ].map(report => (
@@ -978,6 +1343,50 @@ const ManagerDashboard = () => {
               <Table
                 dataSource={teamTasks}
                 columns={taskColumns}
+                pagination={{ pageSize: 10 }}
+              />
+            </Card>
+          </TabPane>
+
+          {/* Leave Management Tab */}
+          <TabPane tab="Leave Requests" key="leaves">
+            <Card
+              title="Leave Requests Management"
+              extra={
+                <Button 
+                  type="primary" 
+                  icon={<RefreshOutlined />}
+                  onClick={fetchLeaveRequests}
+                >
+                  Refresh
+                </Button>
+              }
+            >
+              <Table
+                dataSource={leaveRequests}
+                columns={leaveColumns}
+                pagination={{ pageSize: 10 }}
+              />
+            </Card>
+          </TabPane>
+
+          {/* Loan Management Tab */}
+          <TabPane tab="Loan Requests" key="loans">
+            <Card
+              title="Loan Requests Management"
+              extra={
+                <Button 
+                  type="primary" 
+                  icon={<RefreshOutlined />}
+                  onClick={fetchLoanRequests}
+                >
+                  Refresh
+                </Button>
+              }
+            >
+              <Table
+                dataSource={loanRequests}
+                columns={loanColumns}
                 pagination={{ pageSize: 10 }}
               />
             </Card>
@@ -1077,6 +1486,7 @@ const ManagerDashboard = () => {
               <Option value="attendance">Attendance Report</Option>
               <Option value="leave">Leave Report</Option>
               <Option value="kpi">KPI Report</Option>
+              <Option value="performance">Performance Report</Option>
               <Option value="ot">OT Report</Option>
               <Option value="increment">Increment Report</Option>
               <Option value="nopay">No Pay Report</Option>
@@ -1110,6 +1520,136 @@ const ManagerDashboard = () => {
             </Select>
           </Form.Item>
         </Form>
+      </Modal>
+
+      {/* Leave Approval Modal */}
+      <Modal
+        title="Review Leave Request"
+        open={isLeaveModalVisible}
+        onCancel={() => {
+          setIsLeaveModalVisible(false);
+          setSelectedLeave(null);
+          leaveForm.resetFields();
+        }}
+        footer={null}
+      >
+        {selectedLeave && (
+          <div>
+            <Descriptions column={1} bordered size="small">
+              <Descriptions.Item label="Employee">
+                {selectedLeave.employee?.first_name} {selectedLeave.employee?.last_name}
+              </Descriptions.Item>
+              <Descriptions.Item label="Leave Type">
+                {selectedLeave.leavetype?.leavetype}
+              </Descriptions.Item>
+              <Descriptions.Item label="From Date">
+                {dayjs(selectedLeave.leavefromdate).format('DD/MM/YYYY')}
+              </Descriptions.Item>
+              <Descriptions.Item label="To Date">
+                {dayjs(selectedLeave.leavetodate).format('DD/MM/YYYY')}
+              </Descriptions.Item>
+              <Descriptions.Item label="Duration">
+                {selectedLeave.duration} days
+              </Descriptions.Item>
+              <Descriptions.Item label="Reason">
+                {selectedLeave.leavereason}
+              </Descriptions.Item>
+            </Descriptions>
+            
+            <Divider />
+            
+            <Form form={leaveForm} layout="vertical">
+              <Form.Item name="remarks" label="Remarks (Optional)">
+                <TextArea rows={3} placeholder="Enter any remarks..." />
+              </Form.Item>
+            </Form>
+            
+            <div style={{ textAlign: 'right', marginTop: 16 }}>
+              <Space>
+                <Button 
+                  type="primary" 
+                  danger
+                  icon={<CloseOutlined />}
+                  onClick={() => handleLeaveAction(selectedLeave.leaveid, 'rejected', leaveForm.getFieldValue('remarks'))}
+                >
+                  Reject
+                </Button>
+                <Button 
+                  type="primary" 
+                  icon={<CheckOutlined />}
+                  onClick={() => handleLeaveAction(selectedLeave.leaveid, 'approved', leaveForm.getFieldValue('remarks'))}
+                >
+                  Approve
+                </Button>
+              </Space>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* Loan Approval Modal */}
+      <Modal
+        title="Review Loan Request"
+        open={isLoanModalVisible}
+        onCancel={() => {
+          setIsLoanModalVisible(false);
+          setSelectedLoan(null);
+          loanForm.resetFields();
+        }}
+        footer={null}
+      >
+        {selectedLoan && (
+          <div>
+            <Descriptions column={1} bordered size="small">
+              <Descriptions.Item label="Employee">
+                {selectedLoan.employee?.first_name} {selectedLoan.employee?.last_name}
+              </Descriptions.Item>
+              <Descriptions.Item label="Loan Type">
+                {selectedLoan.loantype?.loantype}
+              </Descriptions.Item>
+              <Descriptions.Item label="Amount">
+                ${selectedLoan.amount?.toLocaleString()}
+              </Descriptions.Item>
+              <Descriptions.Item label="Duration">
+                {selectedLoan.duration} months
+              </Descriptions.Item>
+              <Descriptions.Item label="Interest Rate">
+                {selectedLoan.interestrate}%
+              </Descriptions.Item>
+              <Descriptions.Item label="Employee Salary">
+                ${selectedLoan.employee?.basicsalary?.toLocaleString()}
+              </Descriptions.Item>
+            </Descriptions>
+            
+            <Divider />
+            
+            <Form form={loanForm} layout="vertical">
+              <Form.Item name="remarks" label="Remarks (Optional)">
+                <TextArea rows={3} placeholder="Enter any remarks..." />
+              </Form.Item>
+            </Form>
+            
+            <div style={{ textAlign: 'right', marginTop: 16 }}>
+              <Space>
+                <Button 
+                  type="primary" 
+                  danger
+                  icon={<CloseOutlined />}
+                  onClick={() => handleLoanAction(selectedLoan.loanrequestid, 'rejected', loanForm.getFieldValue('remarks'))}
+                >
+                  Reject
+                </Button>
+                <Button 
+                  type="primary" 
+                  icon={<CheckOutlined />}
+                  onClick={() => handleLoanAction(selectedLoan.loanrequestid, 'approved', loanForm.getFieldValue('remarks'))}
+                >
+                  Approve
+                </Button>
+              </Space>
+            </div>
+          </div>
+        )}
       </Modal>
     </div>
   );

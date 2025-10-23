@@ -1,86 +1,35 @@
+// src/components/Layout/DashboardLayout.js
 import React, { useState, useEffect } from 'react';
 import {
   Layout, Menu, Button, Avatar, Dropdown, Space,
-  Typography, Card, Row, Col, Statistic, Calendar, Badge,
-  Drawer, List, Tag, Tooltip, Empty, Image
+  Typography, Card, Image
 } from 'antd';
 import {
   MenuUnfoldOutlined,
   MenuFoldOutlined,
   DashboardOutlined,
-  CalendarOutlined,
   UserOutlined,
-  LogoutOutlined,
-  TeamOutlined,
-  BellOutlined,
-  DeleteOutlined,
-  CheckOutlined,
-  CrownOutlined,
-  IdcardOutlined
+  LogoutOutlined
 } from '@ant-design/icons';
 import { supabase } from '../../services/supabase';
 import { useNavigate, Outlet, useLocation } from 'react-router-dom';
-import dayjs from 'dayjs';
-import {
-  onChange as onStoreChange, get as getStore, unreadCount as getUnread,
-  markRead, markAllRead, remove as removeItem, clear as clearAll
-} from '../notifications/store';
+import { useAuth } from '../../contexts/AuthContext';
 
 const { Header, Sider, Content } = Layout;
 const { Title, Text } = Typography;
 
-function typeToColor(t) {
-  switch (t) {
-    case 'success': return '#27ae60'
-    case 'error': return '#e74c3c'
-    case 'warning': return '#f39c12'
-    case 'info': return '#3498db'
-    default: return '#7f8c8d'
-  }
-}
-
-const DashboardLayout = () => {
+const DashboardLayout = ({ children }) => {
   const [collapsed, setCollapsed] = useState(false);
-  const [user, setUser] = useState(null);
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [items, setItems] = useState(getStore());
-  const [unread, setUnread] = useState(getUnread());
+  const { profile, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
-  useEffect(() => {
-    getCurrentUser();
-  }, []);
-
-  useEffect(() => {
-    const unsub = onStoreChange((list, unreadCount) => {
-      setItems(list);
-      setUnread(unreadCount);
-    });
-    return () => unsub && unsub();
-  }, []);
-
-  const getCurrentUser = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    setUser(user);
-  };
-
   const handleLogout = async () => {
-    await supabase.auth.signOut();
+    await logout();
     navigate('/login');
   };
 
-  const handlePersonal = async () => {
-    navigate('/employee-dashboard');
-  };
-
   const userMenuItems = [
-    {
-      key: 'profile',
-      icon: <UserOutlined style={{ color: '#3498db' }} />,
-      label: 'Profile',
-      onClick: handlePersonal,
-    },
     {
       key: 'logout',
       icon: <LogoutOutlined style={{ color: '#e74c3c' }} />,
@@ -96,6 +45,16 @@ const DashboardLayout = () => {
       label: 'Dashboard',
     }
   ];
+
+  const getDashboardTitle = () => {
+    if (location.pathname.includes('/admin')) return 'Admin Dashboard';
+    if (location.pathname.includes('/hr')) return 'HR Dashboard';
+    if (location.pathname.includes('/manager')) return 'Manager Dashboard';
+    if (location.pathname.includes('/accountant')) return 'Accountant Dashboard';
+    if (location.pathname.includes('/ceo')) return 'CEO Dashboard';
+    if (location.pathname.includes('/employee')) return 'Employee Dashboard';
+    return 'Dashboard';
+  };
 
   return (
     <Layout style={{
@@ -129,8 +88,6 @@ const DashboardLayout = () => {
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          color: 'white',
-          fontWeight: 'bold',
           backdropFilter: 'blur(10px)',
           border: '1px solid rgba(255,255,255,0.2)'
         }}>
@@ -158,6 +115,9 @@ const DashboardLayout = () => {
                   marginBottom: 4
                 }}
               />
+              <Text style={{ color: 'white', fontSize: '12px', fontWeight: 'bold' }}>
+                NextGen EMS
+              </Text>
             </Space>
           )}
         </div>
@@ -176,6 +136,7 @@ const DashboardLayout = () => {
           }}
         />
 
+        {/* Company Info */}
         <div style={{
           position: 'absolute',
           bottom: 20,
@@ -197,17 +158,13 @@ const DashboardLayout = () => {
           }}>
             EMS For
           </Text>
-          <Image
-            src="/images/aipl.png"
-            alt="Sixth Automotive"
-            preview={false}
-            style={{
-              height: '30px',
-              width: 'auto',
-              objectFit: 'contain',
-              filter: 'brightness(0) invert(1)'
-            }}
-          />
+          <Text style={{
+            color: 'white',
+            fontSize: '10px',
+            fontWeight: 'bold'
+          }}>
+            Sixth Gear Automotive
+          </Text>
         </div>
       </Sider>
 
@@ -225,7 +182,7 @@ const DashboardLayout = () => {
         }}>
           <Button
             type="text"
-            icon={collapsed ?
+            icon={collapsed ? 
               <MenuUnfoldOutlined style={{ color: '#2c3e50', fontSize: '18px' }} /> :
               <MenuFoldOutlined style={{ color: '#2c3e50', fontSize: '18px' }} />
             }
@@ -237,30 +194,15 @@ const DashboardLayout = () => {
             }}
           />
 
-          <Space size="large">
-            {/* Notifications Bell */}
-            <Tooltip title="Notifications">
-              <Badge
-                count={unread}
-                size="small"
-                style={{
-                  backgroundColor: '#e74c3c',
-                  boxShadow: '0 0 0 2px #fff'
-                }}
-              >
-                <Button
-                  type="text"
-                  icon={<BellOutlined style={{ color: '#2c3e50', fontSize: '18px' }} />}
-                  onClick={() => setDrawerOpen(true)}
-                  style={{
-                    borderRadius: '8px',
-                    padding: '8px 12px'
-                  }}
-                />
-              </Badge>
-            </Tooltip>
-
-            {/* User Dropdown */}
+          {/* User Info */}
+          <Space>
+            <Text strong style={{ color: '#2c3e50' }}>
+              {profile?.first_name} {profile?.last_name} 
+              <Text type="secondary" style={{ marginLeft: 8 }}>
+                ({profile?.role})
+              </Text>
+            </Text>
+            
             <Dropdown
               menu={{
                 items: userMenuItems,
@@ -271,30 +213,13 @@ const DashboardLayout = () => {
               }}
               placement="bottomRight"
             >
-              <Space style={{
-                cursor: 'pointer',
-                padding: '8px 16px',
-                borderRadius: '8px',
-                transition: 'all 0.3s',
-                ':hover': {
-                  backgroundColor: '#f5f5f5'
-                }
-              }}>
-                <Avatar
-                  icon={<UserOutlined />}
-                  style={{
-                    backgroundColor: '#3498db',
-                    boxShadow: '0 2px 8px rgba(52, 152, 219, 0.3)'
-                  }}
-                />
-                <Text style={{
-                  color: '#2c3e50',
-                  fontWeight: '600',
-                  fontSize: '14px'
-                }}>
-                  {user?.email}
-                </Text>
-              </Space>
+              <Avatar
+                icon={<UserOutlined />}
+                style={{
+                  backgroundColor: '#3498db',
+                  cursor: 'pointer'
+                }}
+              />
             </Dropdown>
           </Space>
         </Header>
@@ -330,170 +255,22 @@ const DashboardLayout = () => {
                 alignItems: 'center',
                 gap: 12
               }}>
-                <IdcardOutlined style={{ color: '#3498db' }} />
-                {location.pathname === '/dashboard' && 'Dashboard'}
-                {location.pathname === '/departments' && 'Departments'}
-                {location.pathname === '/personal' && 'Personal Schedule'}
+                <DashboardOutlined style={{ color: '#3498db' }} />
+                {getDashboardTitle()}
               </Title>
               <Text style={{
                 color: '#7f8c8d',
                 fontSize: '16px'
               }}>
-                Welcome back, {user?.user_metadata?.full_name || user?.email}
+                Welcome back, {profile?.first_name} {profile?.last_name}
               </Text>
             </div>
 
             {/* Page Content */}
-            <Outlet />
+            {children || <Outlet />}
           </Card>
         </Content>
       </Layout>
-
-      {/* Notifications Drawer */}
-      <Drawer
-        title={
-          <Space>
-            <BellOutlined style={{ color: '#3498db' }} />
-            <span style={{ fontWeight: '600', color: '#2c3e50' }}>Notifications</span>
-            {unread > 0 && (
-              <Tag
-                color="#e74c3c"
-                style={{
-                  fontWeight: '600',
-                  border: 'none'
-                }}
-              >
-                {unread} unread
-              </Tag>
-            )}
-          </Space>
-        }
-        placement="right"
-        width={420}
-        onClose={() => setDrawerOpen(false)}
-        open={drawerOpen}
-        extra={
-          <Space>
-            <Button
-              onClick={() => markAllRead()}
-              style={{
-                borderRadius: '8px',
-                fontWeight: '500'
-              }}
-            >
-              Mark all read
-            </Button>
-            <Button
-              danger
-              onClick={() => clearAll()}
-              style={{
-                borderRadius: '8px',
-                fontWeight: '500'
-              }}
-            >
-              Clear all
-            </Button>
-          </Space>
-        }
-        styles={{
-          body: {
-            padding: '0 8px'
-          },
-          header: {
-            borderBottom: '1px solid #e8e8e8'
-          }
-        }}
-      >
-        {items.length === 0 ? (
-          <Empty
-            description="No notifications yet"
-            imageStyle={{ marginBottom: 16 }}
-            style={{ marginTop: 32 }}
-          />
-        ) : (
-          <List
-            itemLayout="vertical"
-            dataSource={items}
-            renderItem={item => (
-              <List.Item
-                key={item.id}
-                style={{
-                  padding: '16px',
-                  margin: '8px 0',
-                  borderRadius: '12px',
-                  background: item.read ? '#fafafa' : '#ffffff',
-                  border: `2px solid ${item.read ? '#e8e8e8' : typeToColor(item.type)}`,
-                  boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
-                }}
-                actions={[
-                  <Tooltip title={item.read ? 'Mark unread' : 'Mark read'} key="mark">
-                    <Button
-                      size="small"
-                      icon={<CheckOutlined />}
-                      type={item.read ? 'default' : 'primary'}
-                      onClick={() => markRead(item.id, !item.read)}
-                      style={{
-                        borderRadius: '6px'
-                      }}
-                    />
-                  </Tooltip>,
-                  <Tooltip title="Remove" key="remove">
-                    <Button
-                      size="small"
-                      danger
-                      icon={<DeleteOutlined />}
-                      onClick={() => removeItem(item.id)}
-                      style={{
-                        borderRadius: '6px'
-                      }}
-                    />
-                  </Tooltip>
-                ]}
-                extra={
-                  <Tag
-                    color={typeToColor(item.type)}
-                    style={{
-                      border: 'none',
-                      fontWeight: '600',
-                      borderRadius: '6px'
-                    }}
-                  >
-                    {item.type}
-                  </Tag>
-                }
-              >
-                <List.Item.Meta
-                  title={
-                    <div style={{
-                      fontWeight: item.read ? 500 : 700,
-                      color: '#2c3e50',
-                      fontSize: '15px'
-                    }}>
-                      {item.title || '(no title)'}
-                    </div>
-                  }
-                  description={
-                    <div style={{
-                      color: '#7f8c8d',
-                      fontSize: '14px',
-                      lineHeight: 1.5
-                    }}>
-                      {item.description || ''}
-                    </div>
-                  }
-                />
-                <div style={{
-                  fontSize: 12,
-                  color: '#95a5a6',
-                  marginTop: 8
-                }}>
-                  {dayjs(item.createdAt).format('YYYY-MM-DD HH:mm')}
-                </div>
-              </List.Item>
-            )}
-          />
-        )}
-      </Drawer>
     </Layout>
   );
 };
