@@ -48,18 +48,21 @@ import {
   FundOutlined,
   CheckOutlined,
   CloseOutlined,
-
-  ExclamationCircleOutlined
+  ExclamationCircleOutlined,
+  SearchOutlined
 } from '@ant-design/icons';
 import { supabase } from '../../services/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import dayjs from 'dayjs';
 import { Pie, Bar, Line } from '@ant-design/plots';
+import * as XLSX from 'xlsx';
+import { Document, Packer, Paragraph, Table as DocTable, TableCell, TableRow, WidthType } from 'docx';
 
 const { Title, Text } = Typography;
 const { TabPane } = Tabs;
 const { Option } = Select;
 const { TextArea } = Input;
+const { RangePicker } = DatePicker;
 
 const ManagerDashboard = () => {
   const { profile } = useAuth();
@@ -86,6 +89,7 @@ const ManagerDashboard = () => {
   const [reportForm] = Form.useForm();
   const [leaveForm] = Form.useForm();
   const [loanForm] = Form.useForm();
+  const [searchEmployee, setSearchEmployee] = useState('');
 
   useEffect(() => {
     initializeDashboard();
@@ -394,12 +398,75 @@ const ManagerDashboard = () => {
     }
   };
 
+  // Export Functions for XLSX and DOCX
+  const exportToExcel = (data, filename, sheetName = 'Sheet1') => {
+    const worksheet = XLSX.utils.json_to_sheet(data);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
+    XLSX.writeFile(workbook, `${filename}.xlsx`);
+  };
+
+  const exportToWord = async (data, filename, title) => {
+    const tableRows = [
+      new TableRow({
+        children: Object.keys(data[0] || {}).map(key => 
+          new TableCell({
+            children: [new Paragraph({ text: key, style: 'Heading3' })],
+          })
+        ),
+      }),
+      ...data.map(item => 
+        new TableRow({
+          children: Object.values(item).map(value => 
+            new TableCell({
+              children: [new Paragraph({ text: String(value || '') })],
+            })
+          ),
+        })
+      ),
+    ];
+
+    const table = new DocTable({
+      width: {
+        size: 100,
+        type: WidthType.PERCENTAGE,
+      },
+      rows: tableRows,
+    });
+
+    const doc = new Document({
+      sections: [{
+        properties: {},
+        children: [
+          new Paragraph({
+            text: title,
+            style: 'Heading1',
+          }),
+          new Paragraph({
+            text: `Generated on: ${dayjs().format('YYYY-MM-DD HH:mm:ss')}`,
+            style: 'Heading4',
+          }),
+          table,
+        ],
+      }],
+    });
+
+    const blob = await Packer.toBlob(doc);
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${filename}.docx`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
   // Report Generation Functions
   const generateReport = async (values) => {
     try {
       const reportConfig = {
         type: values.report_type,
-        period: values.period,
+        start_date: values.date_range?.[0]?.format('YYYY-MM-DD') || dayjs().subtract(7, 'day').format('YYYY-MM-DD'),
+        end_date: values.date_range?.[1]?.format('YYYY-MM-DD') || dayjs().format('YYYY-MM-DD'),
         employee_id: values.employee_id,
         format: values.format,
         ...values
@@ -442,11 +509,21 @@ const ManagerDashboard = () => {
           throw new Error('Unknown report type');
       }
 
+      // Export based on format
+      const timestamp = dayjs().format('YYYYMMDD_HHmmss');
+      const reportTitle = `${values.report_type}_report_${timestamp}`;
+      
+      if (values.format === 'excel') {
+        exportToExcel(reportData.rawData, reportTitle, values.report_type);
+      } else if (values.format === 'docx') {
+        await exportToWord(reportData.rawData, reportTitle, `${values.report_type.replace(/_/g, ' ').toUpperCase()} REPORT`);
+      }
+
       // Save report to database
       const { data: report, error } = await supabase
         .from('reports')
         .insert([{
-          name: `${values.report_type}_report_${dayjs().format('YYYYMMDD_HHmmss')}`,
+          name: reportTitle,
           type: values.report_type,
           format: values.format,
           status: 'completed',
@@ -459,7 +536,7 @@ const ManagerDashboard = () => {
       if (error) throw error;
 
       setReportData(reportData);
-      message.success('Report generated successfully!');
+      message.success('Report generated and downloaded successfully!');
       setIsReportModalVisible(false);
       reportForm.resetFields();
       fetchRecentReports();
@@ -470,221 +547,219 @@ const ManagerDashboard = () => {
   };
 
   const generateSalaryReport = async (config) => {
-    const startDate = dayjs().startOf(config.period).format('YYYY-MM-DD');
-    const endDate = dayjs().endOf(config.period).format('YYYY-MM-DD');
-
     const { data } = await supabase
       .from('salary')
       .select(`
         *,
-        employee:empid (first_name, last_name)
+        employee:empid (first_name, last_name, email, department)
       `)
       .in('empid', config.employee_id ? [config.employee_id] : teamMembers.map(m => m.empid))
-      .gte('salarydate', startDate)
-      .lte('salarydate', endDate);
+      .gte('salarydate', config.start_date)
+      .lte('salarydate', config.end_date);
 
-    const pieData = data?.map(item => ({
-      type: `${item.employee.first_name} ${item.employee.last_name}`,
-      value: item.totalsalary
+    const formattedData = data?.map(item => ({
+      'Employee Name': `${item.employee?.first_name} ${item.employee?.last_name}`,
+      'Department': item.employee?.department,
+      'Basic Salary': item.basicsalary,
+      'OT Pay': item.otpay,
+      'Bonus Pay': item.bonuspay,
+      'Increment Pay': item.incrementpay,
+      'Total Salary': item.totalsalary,
+      'Salary Date': item.salarydate,
     })) || [];
 
-    return { rawData: data, chartData: pieData, type: 'salary' };
+    return { rawData: formattedData, type: 'salary' };
   };
 
   const generateAttendanceReport = async (config) => {
-    const startDate = dayjs().startOf(config.period).format('YYYY-MM-DD');
-    const endDate = dayjs().endOf(config.period).format('YYYY-MM-DD');
-
     const { data } = await supabase
       .from('attendance')
       .select(`
         *,
-        employee:empid (first_name, last_name)
+        employee:empid (first_name, last_name, department)
       `)
       .in('empid', config.employee_id ? [config.employee_id] : teamMembers.map(m => m.empid))
-      .gte('date', startDate)
-      .lte('date', endDate);
+      .gte('date', config.start_date)
+      .lte('date', config.end_date);
 
-    const statusCount = data?.reduce((acc, item) => {
-      acc[item.status] = (acc[item.status] || 0) + 1;
-      return acc;
-    }, {}) || {};
+    const formattedData = data?.map(item => ({
+      'Employee Name': `${item.employee?.first_name} ${item.employee?.last_name}`,
+      'Department': item.employee?.department,
+      'Date': item.date,
+      'In Time': item.intime,
+      'Out Time': item.outtime,
+      'Status': item.status,
+    })) || [];
 
-    const pieData = Object.entries(statusCount).map(([status, count]) => ({
-      type: status,
-      value: count
-    }));
-
-    return { rawData: data, chartData: pieData, type: 'attendance' };
+    return { rawData: formattedData, type: 'attendance' };
   };
 
   const generateLeaveReport = async (config) => {
-    const startDate = dayjs().startOf(config.period).format('YYYY-MM-DD');
-    const endDate = dayjs().endOf(config.period).format('YYYY-MM-DD');
-
     const { data } = await supabase
       .from('employeeleave')
       .select(`
         *,
-        employee:empid (first_name, last_name),
+        employee:empid (first_name, last_name, department),
         leavetype:leavetypeid (leavetype)
       `)
       .in('empid', config.employee_id ? [config.employee_id] : teamMembers.map(m => m.empid))
-      .gte('leavefromdate', startDate)
-      .lte('leavetodate', endDate);
+      .gte('leavefromdate', config.start_date)
+      .lte('leavetodate', config.end_date);
 
-    const leaveTypeCount = data?.reduce((acc, item) => {
-      const type = item.leavetype?.leavetype || 'Unknown';
-      acc[type] = (acc[type] || 0) + 1;
-      return acc;
-    }, {}) || {};
+    const formattedData = data?.map(item => ({
+      'Employee Name': `${item.employee?.first_name} ${item.employee?.last_name}`,
+      'Department': item.employee?.department,
+      'Leave Type': item.leavetype?.leavetype,
+      'From Date': item.leavefromdate,
+      'To Date': item.leavetodate,
+      'Duration': item.duration,
+      'Reason': item.leavereason,
+      'Status': item.leavestatus,
+    })) || [];
 
-    const pieData = Object.entries(leaveTypeCount).map(([type, count]) => ({
-      type,
-      value: count
-    }));
-
-    return { rawData: data, chartData: pieData, type: 'leave' };
+    return { rawData: formattedData, type: 'leave' };
   };
 
   const generateKPIReport = async (config) => {
-    const startDate = dayjs().startOf(config.period).format('YYYY-MM-DD');
-    const endDate = dayjs().endOf(config.period).format('YYYY-MM-DD');
-
     const { data } = await supabase
       .from('kpi')
       .select(`
         *,
-        employee:empid (first_name, last_name)
+        employee:empid (first_name, last_name, department)
       `)
       .in('empid', config.employee_id ? [config.employee_id] : teamMembers.map(m => m.empid))
-      .gte('calculatedate', startDate)
-      .lte('calculatedate', endDate);
+      .gte('calculatedate', config.start_date)
+      .lte('calculatedate', config.end_date);
 
-    const kpiData = data?.map(item => ({
-      type: `${item.employee.first_name} ${item.employee.last_name}`,
-      value: item.kpivalue
+    const formattedData = data?.map(item => ({
+      'Employee Name': `${item.employee?.first_name} ${item.employee?.last_name}`,
+      'Department': item.employee?.department,
+      'KPI Value': item.kpivalue,
+      'Calculation Date': item.calculatedate,
+      'KPI Year': item.kpiyear,
     })) || [];
 
-    return { rawData: data, chartData: kpiData, type: 'kpi' };
+    return { rawData: formattedData, type: 'kpi' };
   };
 
   const generateOTReport = async (config) => {
-    const startDate = dayjs().startOf(config.period).format('YYYY-MM-DD');
-    const endDate = dayjs().endOf(config.period).format('YYYY-MM-DD');
-
     const { data } = await supabase
       .from('ot')
       .select(`
         *,
-        employee:empid (first_name, last_name)
+        employee:empid (first_name, last_name, department)
       `)
       .in('empid', config.employee_id ? [config.employee_id] : teamMembers.map(m => m.empid))
-      .gte('created_at', startDate)
-      .lte('created_at', endDate);
+      .gte('created_at', config.start_date)
+      .lte('created_at', config.end_date);
 
-    const otData = data?.map(item => ({
-      type: `${item.employee.first_name} ${item.employee.last_name}`,
-      value: item.amount
+    const formattedData = data?.map(item => ({
+      'Employee Name': `${item.employee?.first_name} ${item.employee?.last_name}`,
+      'Department': item.employee?.department,
+      'OT Hours': item.othours,
+      'Rate': item.rate,
+      'Amount': item.amount,
+      'Type': item.type,
+      'Status': item.status,
     })) || [];
 
-    return { rawData: data, chartData: otData, type: 'ot' };
+    return { rawData: formattedData, type: 'ot' };
   };
 
   const generatePerformanceReport = async (config) => {
-    const startDate = dayjs().startOf(config.period).format('YYYY-MM-DD');
-    const endDate = dayjs().endOf(config.period).format('YYYY-MM-DD');
-
     const { data } = await supabase
       .from('performance_rating')
       .select(`
         *,
-        employee:empid (first_name, last_name),
+        employee:empid (first_name, last_name, department),
         evaluator:evaluator_id (first_name, last_name)
       `)
       .in('empid', config.employee_id ? [config.employee_id] : teamMembers.map(m => m.empid))
-      .gte('review_period_start', startDate)
-      .lte('review_period_end', endDate);
+      .gte('rating_date', config.start_date)
+      .lte('rating_date', config.end_date);
 
-    const performanceData = data?.map(item => ({
-      type: `${item.employee.first_name} ${item.employee.last_name}`,
-      value: item.rate
+    const formattedData = data?.map(item => ({
+      'Employee Name': `${item.employee?.first_name} ${item.employee?.last_name}`,
+      'Department': item.employee?.department,
+      'Rating': item.rating,
+      'Comments': item.comments,
+      'Evaluator': `${item.evaluator?.first_name} ${item.evaluator?.last_name}`,
+      'Rating Date': item.rating_date,
     })) || [];
 
-    return { rawData: data, chartData: performanceData, type: 'performance' };
+    return { rawData: formattedData, type: 'performance' };
   };
 
   const generateIncrementReport = async (config) => {
-    const startDate = dayjs().startOf(config.period).format('YYYY-MM-DD');
-    const endDate = dayjs().endOf(config.period).format('YYYY-MM-DD');
-
     const { data } = await supabase
       .from('increment')
       .select(`
         *,
-        employee:empid (first_name, last_name)
+        employee:empid (first_name, last_name, department)
       `)
       .in('empid', config.employee_id ? [config.employee_id] : teamMembers.map(m => m.empid))
-      .gte('created_at', startDate)
-      .lte('created_at', endDate);
+      .gte('created_at', config.start_date)
+      .lte('created_at', config.end_date);
 
-    const incrementData = data?.map(item => ({
-      type: `${item.employee.first_name} ${item.employee.last_name}`,
-      value: item.amount
+    const formattedData = data?.map(item => ({
+      'Employee Name': `${item.employee?.first_name} ${item.employee?.last_name}`,
+      'Department': item.employee?.department,
+      'Percentage': item.percentage,
+      'Amount': item.amount,
+      'Last Increment Date': item.lastincrementdate,
+      'Next Increment Date': item.nextincrementdate,
+      'Approval Status': item.approval,
     })) || [];
 
-    return { rawData: data, chartData: incrementData, type: 'increment' };
+    return { rawData: formattedData, type: 'increment' };
   };
 
   const generateNoPayReport = async (config) => {
-    const startDate = dayjs().startOf(config.period).format('YYYY-MM-DD');
-    const endDate = dayjs().endOf(config.period).format('YYYY-MM-DD');
-
     const { data } = await supabase
       .from('nopay')
       .select(`
         *,
-        employee:empid (first_name, last_name)
+        employee:empid (first_name, last_name, department)
       `)
       .in('empid', config.employee_id ? [config.employee_id] : teamMembers.map(m => m.empid))
-      .gte('created_at', startDate)
-      .lte('created_at', endDate);
+      .gte('created_at', config.start_date)
+      .lte('created_at', config.end_date);
 
-    const nopayData = data?.map(item => ({
-      type: `${item.employee.first_name} ${item.employee.last_name}`,
-      value: item.deductionamount
+    const formattedData = data?.map(item => ({
+      'Employee Name': `${item.employee?.first_name} ${item.employee?.last_name}`,
+      'Department': item.employee?.department,
+      'Deduction Amount': item.deductionamount,
+      'Deduction Date': item.deductiondate,
+      'Reason': item.reason,
     })) || [];
 
-    return { rawData: data, chartData: nopayData, type: 'nopay' };
+    return { rawData: formattedData, type: 'nopay' };
   };
 
   const generateLoanReport = async (config) => {
-    const startDate = dayjs().startOf(config.period).format('YYYY-MM-DD');
-    const endDate = dayjs().endOf(config.period).format('YYYY-MM-DD');
-
     const { data } = await supabase
       .from('loanrequest')
       .select(`
         *,
-        employee:empid (first_name, last_name),
+        employee:empid (first_name, last_name, department),
         loantype:loantypeid (loantype)
       `)
       .in('empid', config.employee_id ? [config.employee_id] : teamMembers.map(m => m.empid))
-      .gte('created_at', startDate)
-      .lte('created_at', endDate);
+      .gte('created_at', config.start_date)
+      .lte('created_at', config.end_date);
 
-    const loanTypeData = data?.reduce((acc, item) => {
-      const type = item.loantype?.loantype || 'Unknown';
-      acc[type] = (acc[type] || 0) + 1;
-      return acc;
-    }, {}) || {};
+    const formattedData = data?.map(item => ({
+      'Employee Name': `${item.employee?.first_name} ${item.employee?.last_name}`,
+      'Department': item.employee?.department,
+      'Loan Type': item.loantype?.loantype,
+      'Amount': item.amount,
+      'Duration': item.duration,
+      'Interest Rate': item.interestrate,
+      'Status': item.status,
+      'Request Date': item.date,
+    })) || [];
 
-    const pieData = Object.entries(loanTypeData).map(([type, count]) => ({
-      type,
-      value: count
-    }));
-
-    return { rawData: data, chartData: pieData, type: 'loan' };
+    return { rawData: formattedData, type: 'loan' };
   };
 
   const generateStaffReport = async (config) => {
@@ -694,41 +769,32 @@ const ManagerDashboard = () => {
       .eq('managerid', profile.empid)
       .eq('is_active', true);
 
-    const departmentData = data?.reduce((acc, item) => {
-      acc[item.department] = (acc[item.department] || 0) + 1;
-      return acc;
-    }, {}) || {};
+    const formattedData = data?.map(item => ({
+      'Employee ID': item.empid,
+      'Full Name': item.full_name,
+      'Email': item.email,
+      'Phone': item.phone,
+      'Role': item.role,
+      'Department': item.department,
+      'Gender': item.gender,
+      'Status': item.status,
+      'Basic Salary': item.basicsalary,
+      'KPI Score': item.kpiscore,
+      'Satisfaction Score': item.satisfaction_score,
+      'Date of Birth': item.dob,
+      'Tenure': item.tenure,
+    })) || [];
 
-    const pieData = Object.entries(departmentData).map(([dept, count]) => ({
-      type: dept,
-      value: count
-    }));
-
-    return { rawData: data, chartData: pieData, type: 'staff' };
+    return { rawData: formattedData, type: 'staff' };
   };
 
-  const renderPieChart = (data) => {
-    if (!data?.chartData?.length) {
-      return <div>No data available for chart</div>;
-    }
-
-    const config = {
-      data: data.chartData,
-      angleField: 'value',
-      colorField: 'type',
-      radius: 0.8,
-      label: {
-        type: 'outer',
-        content: '{name} {percentage}',
-      },
-      interactions: [
-        {
-          type: 'element-active',
-        },
-      ],
-    };
-    return <Pie {...config} />;
-  };
+  // Filtered team members based on search
+  const filteredTeamMembers = teamMembers.filter(member =>
+    member.first_name?.toLowerCase().includes(searchEmployee.toLowerCase()) ||
+    member.last_name?.toLowerCase().includes(searchEmployee.toLowerCase()) ||
+    member.email?.toLowerCase().includes(searchEmployee.toLowerCase()) ||
+    member.department?.toLowerCase().includes(searchEmployee.toLowerCase())
+  );
 
   const taskColumns = [
     {
@@ -1015,58 +1081,86 @@ const ManagerDashboard = () => {
               </Col>
             </Row>
 
+            {/* Action Buttons */}
+            <Row gutter={[8, 8]} style={{ marginBottom: 16 }}>
+              <Col>
+                <Button 
+                  type="primary" 
+                  icon={<PlusOutlined />}
+                  onClick={() => setIsTaskModalVisible(true)}
+                >
+                  Assign Task
+                </Button>
+              </Col>
+              <Col>
+                <Button 
+                  type="default" 
+                  icon={<DownloadOutlined />}
+                  onClick={() => setIsReportModalVisible(true)}
+                >
+                  Generate Report
+                </Button>
+              </Col>
+              <Col>
+                <Button 
+                  type="default" 
+                  icon={<ReloadOutlined />}
+                  onClick={initializeDashboard}
+                >
+                  Refresh
+                </Button>
+              </Col>
+            </Row>
+
+            {/* Team Members Section */}
             <Row gutter={[16, 16]}>
-              {/* Team Members */}
               <Col xs={24} lg={12}>
                 <Card 
-                  title="My Team" 
-                  extra={
+                  title={
                     <Space>
-                      <Button type="link" icon={<EyeOutlined />}>View All</Button>
-                      <Button 
-                        type="primary" 
-                        icon={<PlusOutlined />}
-                        onClick={() => setIsReportModalVisible(true)}
-                      >
-                        Generate Report
-                      </Button>
+                      <TeamOutlined />
+                      Team Members ({filteredTeamMembers.length})
                     </Space>
                   }
-                  loading={loading}
+                  extra={
+                    <Input
+                      placeholder="Search team members..."
+                      prefix={<SearchOutlined />}
+                      value={searchEmployee}
+                      onChange={(e) => setSearchEmployee(e.target.value)}
+                      style={{ width: 200 }}
+                    />
+                  }
                 >
                   <List
-                    dataSource={teamMembers}
-                    renderItem={member => (
+                    dataSource={filteredTeamMembers}
+                    renderItem={(employee) => (
                       <List.Item
                         actions={[
                           <Button 
                             type="link" 
-                            icon={<MessageOutlined />} 
-                            size="small"
+                            icon={<MessageOutlined />}
                             onClick={() => {
-                              setSelectedEmployee(member);
+                              setSelectedEmployee(employee);
                               setIsFeedbackModalVisible(true);
                             }}
                           >
                             Feedback
-                          </Button>,
-                          <Button type="link" icon={<EyeOutlined />} size="small">View</Button>
+                          </Button>
                         ]}
                       >
                         <List.Item.Meta
-                          avatar={<Avatar icon={<UserOutlined />} style={{ backgroundColor: '#1890ff' }} />}
-                          title={`${member.first_name} ${member.last_name}`}
+                          avatar={<Avatar icon={<UserOutlined />} />}
+                          title={`${employee.first_name} ${employee.last_name}`}
                           description={
                             <Space direction="vertical" size={0}>
-                              <Text type="secondary">{member.role}</Text>
-                              <Space>
-                                <Tag color="blue">{member.department}</Tag>
-                                <Progress 
-                                  percent={member.kpiscore || 75} 
-                                  size="small" 
-                                  style={{ width: 100 }} 
-                                />
-                              </Space>
+                              <Text type="secondary">{employee.email}</Text>
+                              <Text type="secondary">{employee.department}</Text>
+                              <Progress 
+                                percent={employee.kpiscore || 0} 
+                                size="small" 
+                                status={employee.kpiscore >= 80 ? 'success' : employee.kpiscore >= 60 ? 'normal' : 'exception'}
+                              />
                             </Space>
                           }
                         />
@@ -1076,20 +1170,14 @@ const ManagerDashboard = () => {
                 </Card>
               </Col>
 
-              {/* Team Tasks */}
               <Col xs={24} lg={12}>
                 <Card 
-                  title="Team Tasks" 
-                  extra={
-                    <Button 
-                      type="primary" 
-                      icon={<PlusOutlined />}
-                      onClick={() => setIsTaskModalVisible(true)}
-                    >
-                      Assign Task
-                    </Button>
+                  title={
+                    <Space>
+                      <CalendarOutlined />
+                      Recent Tasks
+                    </Space>
                   }
-                  loading={loading}
                 >
                   <Table
                     dataSource={teamTasks}
@@ -1099,126 +1187,43 @@ const ManagerDashboard = () => {
                   />
                 </Card>
               </Col>
+            </Row>
 
-              {/* Pending Approvals */}
+            {/* Pending Approvals */}
+            <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
               <Col xs={24} lg={12}>
                 <Card 
-                  title="Pending Approvals" 
-                  extra={
+                  title={
                     <Space>
-                      <Badge count={leaveRequests.length} offset={[-5, 0]}>
-                        <Button 
-                          type="link" 
-                          onClick={() => setActiveTab('leaves')}
-                        >
-                          Leaves
-                        </Button>
-                      </Badge>
-                      <Badge count={loanRequests.length} offset={[-5, 0]}>
-                        <Button 
-                          type="link" 
-                          onClick={() => setActiveTab('loans')}
-                        >
-                          Loans
-                        </Button>
-                      </Badge>
+                      <ExclamationCircleOutlined />
+                      Pending Leave Requests ({leaveRequests.length})
                     </Space>
                   }
                 >
-                  <Row gutter={[16, 16]}>
-                    <Col span={12}>
-                      <Card 
-                        size="small" 
-                        hoverable
-                        onClick={() => setActiveTab('leaves')}
-                        style={{ cursor: 'pointer', textAlign: 'center' }}
-                      >
-                        <Space direction="vertical">
-                          <ExclamationCircleOutlined style={{ fontSize: '24px', color: '#faad14' }} />
-                          <Text strong>Leave Requests</Text>
-                          <Statistic value={leaveRequests.length} valueStyle={{ color: '#faad14' }} />
-                        </Space>
-                      </Card>
-                    </Col>
-                    <Col span={12}>
-                      <Card 
-                        size="small" 
-                        hoverable
-                        onClick={() => setActiveTab('loans')}
-                        style={{ cursor: 'pointer', textAlign: 'center' }}
-                      >
-                        <Space direction="vertical">
-                          <ExclamationCircleOutlined style={{ fontSize: '24px', color: '#faad14' }} />
-                          <Text strong>Loan Requests</Text>
-                          <Statistic value={loanRequests.length} valueStyle={{ color: '#faad14' }} />
-                        </Space>
-                      </Card>
-                    </Col>
-                  </Row>
+                  <Table
+                    dataSource={leaveRequests}
+                    columns={leaveColumns}
+                    pagination={false}
+                    size="small"
+                  />
                 </Card>
               </Col>
 
-              {/* Quick Manager Actions */}
               <Col xs={24} lg={12}>
-                <Card title="Manager Actions">
-                  <Row gutter={[16, 16]}>
-                    <Col span={12}>
-                      <Card size="small" hoverable style={{ textAlign: 'center', height: '100%' }}>
-                        <Button 
-                          type="primary" 
-                          icon={<CheckCircleOutlined />} 
-                          block 
-                          size="large"
-                          onClick={() => setActiveTab('leaves')}
-                        >
-                          Approve Leaves
-                        </Button>
-                      </Card>
-                    </Col>
-                    <Col span={12}>
-                      <Card size="small" hoverable style={{ textAlign: 'center', height: '100%' }}>
-                        <Button 
-                          icon={<BarChartOutlined />} 
-                          block 
-                          size="large"
-                          onClick={() => {
-                            setActiveTab('reports');
-                            reportForm.setFieldsValue({ report_type: 'performance' });
-                            setIsReportModalVisible(true);
-                          }}
-                        >
-                          Performance Review
-                        </Button>
-                      </Card>
-                    </Col>
-                    <Col span={12}>
-                      <Card size="small" hoverable style={{ textAlign: 'center', height: '100%' }}>
-                        <Button 
-                          icon={<FileTextOutlined />} 
-                          block 
-                          size="large"
-                          onClick={() => {
-                            setActiveTab('reports');
-                            setIsReportModalVisible(true);
-                          }}
-                        >
-                          Generate Reports
-                        </Button>
-                      </Card>
-                    </Col>
-                    <Col span={12}>
-                      <Card size="small" hoverable style={{ textAlign: 'center', height: '100%' }}>
-                        <Button 
-                          icon={<RocketOutlined />} 
-                          block 
-                          size="large"
-                          onClick={() => setIsTaskModalVisible(true)}
-                        >
-                          Assign Tasks
-                        </Button>
-                      </Card>
-                    </Col>
-                  </Row>
+                <Card 
+                  title={
+                    <Space>
+                      <FundOutlined />
+                      Pending Loan Requests ({loanRequests.length})
+                    </Space>
+                  }
+                >
+                  <Table
+                    dataSource={loanRequests}
+                    columns={loanColumns}
+                    pagination={false}
+                    size="small"
+                  />
                 </Card>
               </Col>
             </Row>
@@ -1229,11 +1234,11 @@ const ManagerDashboard = () => {
             <Row gutter={[16, 16]}>
               <Col span={24}>
                 <Card
-                  title="Report Generator"
+                  title="Report Generation"
                   extra={
                     <Button 
                       type="primary" 
-                      icon={<PlusOutlined />}
+                      icon={<DownloadOutlined />}
                       onClick={() => setIsReportModalVisible(true)}
                     >
                       Generate New Report
@@ -1241,157 +1246,31 @@ const ManagerDashboard = () => {
                   }
                 >
                   <Row gutter={[16, 16]}>
-                    <Col span={12}>
-                      <Card 
-                        title="Quick Reports" 
-                        size="small"
-                      >
-                        <Space direction="vertical" style={{ width: '100%' }}>
-                          {[
-                            { type: 'salary', name: 'Salary Report', icon: <FundOutlined /> },
-                            { type: 'attendance', name: 'Attendance Report', icon: <CalendarOutlined /> },
-                            { type: 'leave', name: 'Leave Report', icon: <UserOutlined /> },
-                            { type: 'kpi', name: 'KPI Report', icon: <LineChartOutlined /> },
-                            { type: 'performance', name: 'Performance Report', icon: <BarChartOutlined /> },
-                            { type: 'ot', name: 'OT Report', icon: <BarChartOutlined /> },
-                            { type: 'staff', name: 'Staff Report', icon: <TeamOutlined /> }
-                          ].map(report => (
-                            <Button 
-                              key={report.type}
-                              icon={report.icon}
-                              block
-                              style={{ textAlign: 'left' }}
-                              onClick={() => {
-                                reportForm.setFieldsValue({
-                                  report_type: report.type,
-                                  period: 'month'
-                                });
-                                setIsReportModalVisible(true);
-                              }}
-                            >
-                              {report.name}
-                            </Button>
-                          ))}
-                        </Space>
-                      </Card>
-                    </Col>
-                    <Col span={12}>
-                      <Card 
-                        title="Recent Reports" 
-                        size="small"
-                      >
-                        <List
-                          dataSource={reports}
-                          renderItem={report => (
-                            <List.Item
-                              actions={[
-                                <Button type="link" icon={<DownloadOutlined />} size="small">Download</Button>
-                              ]}
-                            >
-                              <List.Item.Meta
-                                avatar={<Avatar icon={<FileTextOutlined />} />}
-                                title={report.name}
-                                description={`Type: ${report.type} | Status: ${report.status}`}
-                              />
-                            </List.Item>
-                          )}
-                        />
-                      </Card>
+                    <Col span={24}>
+                      <Title level={4}>Recent Reports</Title>
+                      <List
+                        dataSource={reports}
+                        renderItem={(report) => (
+                          <List.Item
+                            actions={[
+                              <Button type="link" icon={<DownloadOutlined />}>
+                                Download
+                              </Button>
+                            ]}
+                          >
+                            <List.Item.Meta
+                              avatar={<FileTextOutlined />}
+                              title={report.name}
+                              description={`Type: ${report.type} | Format: ${report.format} | Created: ${dayjs(report.created_at).format('DD/MM/YYYY HH:mm')}`}
+                            />
+                          </List.Item>
+                        )}
+                      />
                     </Col>
                   </Row>
-
-                  {/* Report Visualization */}
-                  {reportData.chartData && (
-                    <Card title="Report Visualization" style={{ marginTop: 16 }}>
-                      <Row gutter={[16, 16]}>
-                        <Col span={12}>
-                          {renderPieChart(reportData)}
-                        </Col>
-                        <Col span={12}>
-                          <Card title="Report Summary" size="small">
-                            <List
-                              dataSource={reportData.chartData}
-                              renderItem={item => (
-                                <List.Item>
-                                  <Text>{item.type}:</Text>
-                                  <Text strong>{item.value}</Text>
-                                </List.Item>
-                              )}
-                            />
-                          </Card>
-                        </Col>
-                      </Row>
-                    </Card>
-                  )}
                 </Card>
               </Col>
             </Row>
-          </TabPane>
-
-          {/* Task Management Tab */}
-          <TabPane tab="Task Management" key="tasks">
-            <Card
-              title="Task Management"
-              extra={
-                <Button 
-                  type="primary" 
-                  icon={<PlusOutlined />}
-                  onClick={() => setIsTaskModalVisible(true)}
-                >
-                  Assign New Task
-                </Button>
-              }
-            >
-              <Table
-                dataSource={teamTasks}
-                columns={taskColumns}
-                pagination={{ pageSize: 10 }}
-              />
-            </Card>
-          </TabPane>
-
-          {/* Leave Management Tab */}
-          <TabPane tab="Leave Requests" key="leaves">
-            <Card
-              title="Leave Requests Management"
-              extra={
-                <Button 
-                  type="primary" 
-                  icon={<ReloadOutlined />}
-                  onClick={fetchLeaveRequests}
-                >
-                  Refresh
-                </Button>
-              }
-            >
-              <Table
-                dataSource={leaveRequests}
-                columns={leaveColumns}
-                pagination={{ pageSize: 10 }}
-              />
-            </Card>
-          </TabPane>
-
-          {/* Loan Management Tab */}
-          <TabPane tab="Loan Requests" key="loans">
-            <Card
-              title="Loan Requests Management"
-              extra={
-                <Button 
-                  type="primary" 
-                  icon={<ReloadOutlined />}
-                  onClick={fetchLoanRequests}
-                >
-                  Refresh
-                </Button>
-              }
-            >
-              <Table
-                dataSource={loanRequests}
-                columns={loanColumns}
-                pagination={{ pageSize: 10 }}
-              />
-            </Card>
           </TabPane>
         </Tabs>
       </Card>
@@ -1405,20 +1284,21 @@ const ManagerDashboard = () => {
           setIsTaskModalVisible(false);
           taskForm.resetFields();
         }}
-        onOk={() => taskForm.submit()}
+        footer={null}
+        width={600}
       >
         <Form form={taskForm} layout="vertical" onFinish={assignTask}>
           <Form.Item name="title" label="Task Title" rules={[{ required: true }]}>
-            <Input />
+            <Input placeholder="Enter task title" />
           </Form.Item>
           <Form.Item name="description" label="Description">
-            <TextArea rows={4} />
+            <TextArea rows={3} placeholder="Enter task description" />
           </Form.Item>
-          <Form.Item name="assignee_id" label="Assignee" rules={[{ required: true }]}>
+          <Form.Item name="assignee_id" label="Assign To" rules={[{ required: true }]}>
             <Select placeholder="Select team member">
               {teamMembers.map(member => (
                 <Option key={member.empid} value={member.empid}>
-                  {member.first_name} {member.last_name}
+                  {member.first_name} {member.last_name} - {member.department}
                 </Option>
               ))}
             </Select>
@@ -1433,6 +1313,19 @@ const ManagerDashboard = () => {
               <Option value="high">High</Option>
             </Select>
           </Form.Item>
+          <Form.Item>
+            <Space>
+              <Button type="primary" htmlType="submit">
+                Assign Task
+              </Button>
+              <Button onClick={() => {
+                setIsTaskModalVisible(false);
+                taskForm.resetFields();
+              }}>
+                Cancel
+              </Button>
+            </Space>
+          </Form.Item>
         </Form>
       </Modal>
 
@@ -1445,18 +1338,19 @@ const ManagerDashboard = () => {
           feedbackForm.resetFields();
           setSelectedEmployee(null);
         }}
-        onOk={() => feedbackForm.submit()}
+        footer={null}
+        width={600}
       >
         <Form form={feedbackForm} layout="vertical" onFinish={giveFeedback}>
           <Form.Item name="feedback_type" label="Feedback Type" rules={[{ required: true }]}>
-            <Select>
+            <Select placeholder="Select feedback type">
               <Option value="positive">Positive</Option>
               <Option value="constructive">Constructive</Option>
-              <Option value="developmental">Developmental</Option>
+              <Option value="improvement">Improvement Needed</Option>
             </Select>
           </Form.Item>
           <Form.Item name="rating" label="Rating (1-5)" rules={[{ required: true }]}>
-            <Select>
+            <Select placeholder="Select rating">
               <Option value={1}>1 - Poor</Option>
               <Option value={2}>2 - Fair</Option>
               <Option value={3}>3 - Good</Option>
@@ -1465,7 +1359,21 @@ const ManagerDashboard = () => {
             </Select>
           </Form.Item>
           <Form.Item name="feedback" label="Feedback" rules={[{ required: true }]}>
-            <TextArea rows={4} placeholder="Provide detailed feedback..." />
+            <TextArea rows={4} placeholder="Enter your feedback..." />
+          </Form.Item>
+          <Form.Item>
+            <Space>
+              <Button type="primary" htmlType="submit">
+                Submit Feedback
+              </Button>
+              <Button onClick={() => {
+                setIsFeedbackModalVisible(false);
+                feedbackForm.resetFields();
+                setSelectedEmployee(null);
+              }}>
+                Cancel
+              </Button>
+            </Space>
           </Form.Item>
         </Form>
       </Modal>
@@ -1478,62 +1386,83 @@ const ManagerDashboard = () => {
           setIsReportModalVisible(false);
           reportForm.resetFields();
         }}
-        onOk={() => reportForm.submit()}
-        width={600}
+        footer={null}
+        width={700}
       >
         <Form form={reportForm} layout="vertical" onFinish={generateReport}>
-          <Form.Item name="report_type" label="Report Type" rules={[{ required: true }]}>
-            <Select>
-              <Option value="salary">Salary Report</Option>
-              <Option value="attendance">Attendance Report</Option>
-              <Option value="leave">Leave Report</Option>
-              <Option value="kpi">KPI Report</Option>
-              <Option value="performance">Performance Report</Option>
-              <Option value="ot">OT Report</Option>
-              <Option value="increment">Increment Report</Option>
-              <Option value="nopay">No Pay Report</Option>
-              <Option value="loan">Loan Report</Option>
-              <Option value="staff">Staff Report</Option>
-            </Select>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item name="report_type" label="Report Type" rules={[{ required: true }]}>
+                <Select placeholder="Select report type">
+                  <Option value="salary">Salary Report</Option>
+                  <Option value="attendance">Attendance Report</Option>
+                  <Option value="leave">Leave Report</Option>
+                  <Option value="kpi">KPI Report</Option>
+                  <Option value="ot">OT Report</Option>
+                  <Option value="performance">Performance Report</Option>
+                  <Option value="increment">Increment Report</Option>
+                  <Option value="loan">Loan Report</Option>
+                  <Option value="staff">Staff Report</Option>
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="format" label="Export Format" rules={[{ required: true }]}>
+                <Select placeholder="Select format">
+                  <Option value="excel">Excel (.xlsx)</Option>
+                  <Option value="docx">Word (.docx)</Option>
+                </Select>
+              </Form.Item>
+            </Col>
+          </Row>
+          
+          <Form.Item name="date_range" label="Date Range" initialValue={[dayjs().subtract(7, 'day'), dayjs()]}>
+            <RangePicker style={{ width: '100%' }} />
           </Form.Item>
-          <Form.Item name="period" label="Period" rules={[{ required: true }]}>
-            <Select>
-              <Option value="day">Daily</Option>
-              <Option value="week">Weekly</Option>
-              <Option value="month">Monthly</Option>
-              <Option value="quarter">Quarterly</Option>
-              <Option value="year">Annual</Option>
-            </Select>
-          </Form.Item>
+
           <Form.Item name="employee_id" label="Employee (Optional)">
-            <Select allowClear placeholder="Select specific employee or leave blank for all">
+            <Select 
+              placeholder="Select specific employee (leave empty for all team members)"
+              allowClear
+              showSearch
+              filterOption={(input, option) =>
+                option.children.toLowerCase().indexOf(input.toLowerCase()) >= 0
+              }
+            >
               {teamMembers.map(member => (
                 <Option key={member.empid} value={member.empid}>
-                  {member.first_name} {member.last_name}
+                  {member.first_name} {member.last_name} - {member.department}
                 </Option>
               ))}
             </Select>
           </Form.Item>
-          <Form.Item name="format" label="Format" initialValue="pdf">
-            <Select>
-              <Option value="pdf">PDF</Option>
-              <Option value="excel">Excel</Option>
-              <Option value="csv">CSV</Option>
-            </Select>
+
+          <Form.Item>
+            <Space>
+              <Button type="primary" htmlType="submit" icon={<DownloadOutlined />}>
+                Generate & Download
+              </Button>
+              <Button onClick={() => {
+                setIsReportModalVisible(false);
+                reportForm.resetFields();
+              }}>
+                Cancel
+              </Button>
+            </Space>
           </Form.Item>
         </Form>
       </Modal>
 
-      {/* Leave Approval Modal */}
+      {/* Leave Review Modal */}
       <Modal
         title="Review Leave Request"
         open={isLeaveModalVisible}
         onCancel={() => {
           setIsLeaveModalVisible(false);
           setSelectedLeave(null);
-          leaveForm.resetFields();
         }}
         footer={null}
+        width={600}
       >
         {selectedLeave && (
           <div>
@@ -1564,41 +1493,45 @@ const ManagerDashboard = () => {
               <Form.Item name="remarks" label="Remarks (Optional)">
                 <TextArea rows={3} placeholder="Enter any remarks..." />
               </Form.Item>
+              <Form.Item>
+                <Space>
+                  <Button 
+                    type="primary" 
+                    icon={<CheckOutlined />}
+                    onClick={() => handleLeaveAction(selectedLeave.leaveid, 'approved', leaveForm.getFieldValue('remarks'))}
+                  >
+                    Approve
+                  </Button>
+                  <Button 
+                    danger 
+                    icon={<CloseOutlined />}
+                    onClick={() => handleLeaveAction(selectedLeave.leaveid, 'rejected', leaveForm.getFieldValue('remarks'))}
+                  >
+                    Reject
+                  </Button>
+                  <Button onClick={() => {
+                    setIsLeaveModalVisible(false);
+                    setSelectedLeave(null);
+                  }}>
+                    Cancel
+                  </Button>
+                </Space>
+              </Form.Item>
             </Form>
-            
-            <div style={{ textAlign: 'right', marginTop: 16 }}>
-              <Space>
-                <Button 
-                  type="primary" 
-                  danger
-                  icon={<CloseOutlined />}
-                  onClick={() => handleLeaveAction(selectedLeave.leaveid, 'rejected', leaveForm.getFieldValue('remarks'))}
-                >
-                  Reject
-                </Button>
-                <Button 
-                  type="primary" 
-                  icon={<CheckOutlined />}
-                  onClick={() => handleLeaveAction(selectedLeave.leaveid, 'approved', leaveForm.getFieldValue('remarks'))}
-                >
-                  Approve
-                </Button>
-              </Space>
-            </div>
           </div>
         )}
       </Modal>
 
-      {/* Loan Approval Modal */}
+      {/* Loan Review Modal */}
       <Modal
         title="Review Loan Request"
         open={isLoanModalVisible}
         onCancel={() => {
           setIsLoanModalVisible(false);
           setSelectedLoan(null);
-          loanForm.resetFields();
         }}
         footer={null}
+        width={600}
       >
         {selectedLoan && (
           <div>
@@ -1618,8 +1551,11 @@ const ManagerDashboard = () => {
               <Descriptions.Item label="Interest Rate">
                 {selectedLoan.interestrate}%
               </Descriptions.Item>
-              <Descriptions.Item label="Employee Salary">
+              <Descriptions.Item label="Basic Salary">
                 ${selectedLoan.employee?.basicsalary?.toLocaleString()}
+              </Descriptions.Item>
+              <Descriptions.Item label="Request Date">
+                {dayjs(selectedLoan.date).format('DD/MM/YYYY')}
               </Descriptions.Item>
             </Descriptions>
             
@@ -1629,27 +1565,31 @@ const ManagerDashboard = () => {
               <Form.Item name="remarks" label="Remarks (Optional)">
                 <TextArea rows={3} placeholder="Enter any remarks..." />
               </Form.Item>
+              <Form.Item>
+                <Space>
+                  <Button 
+                    type="primary" 
+                    icon={<CheckOutlined />}
+                    onClick={() => handleLoanAction(selectedLoan.loanrequestid, 'approved', loanForm.getFieldValue('remarks'))}
+                  >
+                    Approve
+                  </Button>
+                  <Button 
+                    danger 
+                    icon={<CloseOutlined />}
+                    onClick={() => handleLoanAction(selectedLoan.loanrequestid, 'rejected', loanForm.getFieldValue('remarks'))}
+                  >
+                    Reject
+                  </Button>
+                  <Button onClick={() => {
+                    setIsLoanModalVisible(false);
+                    setSelectedLoan(null);
+                  }}>
+                    Cancel
+                  </Button>
+                </Space>
+              </Form.Item>
             </Form>
-            
-            <div style={{ textAlign: 'right', marginTop: 16 }}>
-              <Space>
-                <Button 
-                  type="primary" 
-                  danger
-                  icon={<CloseOutlined />}
-                  onClick={() => handleLoanAction(selectedLoan.loanrequestid, 'rejected', loanForm.getFieldValue('remarks'))}
-                >
-                  Reject
-                </Button>
-                <Button 
-                  type="primary" 
-                  icon={<CheckOutlined />}
-                  onClick={() => handleLoanAction(selectedLoan.loanrequestid, 'approved', loanForm.getFieldValue('remarks'))}
-                >
-                  Approve
-                </Button>
-              </Space>
-            </div>
           </div>
         )}
       </Modal>

@@ -29,12 +29,18 @@ const roleRoutes = {
   CEO: '/ceo/dashboard',
   Accountant: '/accountant/dashboard',
   HR: '/hr/dashboard',
+  admin: '/admin/dashboard',
+  manager: '/manager/dashboard',
+  employee: '/employee/dashboard',
+  ceo: '/ceo/dashboard',
+  accountant: '/accountant/dashboard',
+  hr: '/hr/dashboard',
 };
 
 const Login = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
-  const [form] = Form.useForm(); // ✅ define form
+  const [form] = Form.useForm();
 
   // 🟢 Handle form submit
   const handleLogin = async (values) => {
@@ -42,7 +48,7 @@ const Login = () => {
     setLoading(true);
 
     try {
-      
+
       if (email === 'admin@admin.com' && password === 'admin123') {
         message.success('Welcome, Admin (Hardcoded)');
         navigate('/admin/dashboard');

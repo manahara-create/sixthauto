@@ -86,8 +86,8 @@ function App() {
           />
 
           {/* ---------- DEFAULT REDIRECTS ---------- */}
-          <Route path="/" element={<Navigate to="/employee/dashboard" replace />} />
-          <Route path="*" element={<Navigate to="/employee/dashboard" replace />} />
+          <Route path="/" element={<Navigate to="/login" replace />} />
+          <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
       </Router>
     </ConfigProvider>

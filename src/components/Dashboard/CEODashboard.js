@@ -64,12 +64,15 @@ import { supabase } from '../../services/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import dayjs from 'dayjs';
 import { Pie, Bar, Line } from '@ant-design/plots';
+import * as XLSX from 'xlsx';
+import { Document, Packer, Paragraph, Table as DocTable, TableCell, TableRow } from 'docx';
 
 const { Title, Text } = Typography;
 const { TabPane } = Tabs;
 const { Option } = Select;
 const { TextArea } = Input;
 const { Step } = Steps;
+const { RangePicker } = DatePicker;
 
 const CEODashboard = () => {
   const { profile } = useAuth();
@@ -84,7 +87,7 @@ const CEODashboard = () => {
   const [reports, setReports] = useState([]);
   const [meetings, setMeetings] = useState([]);
   const [tasks, setTasks] = useState([]);
-  
+
   // Modal states
   const [isTaskModalVisible, setIsTaskModalVisible] = useState(false);
   const [isFeedbackModalVisible, setIsFeedbackModalVisible] = useState(false);
@@ -95,16 +98,16 @@ const CEODashboard = () => {
   const [isEditTaskModalVisible, setIsEditTaskModalVisible] = useState(false);
   const [isEditGoalModalVisible, setIsEditGoalModalVisible] = useState(false);
   const [isAddGoalModalVisible, setIsAddGoalModalVisible] = useState(false);
-  
+
   // Selected items
   const [selectedEmployee, setSelectedEmployee] = useState(null);
   const [selectedMeeting, setSelectedMeeting] = useState(null);
   const [selectedTask, setSelectedTask] = useState(null);
   const [selectedGoal, setSelectedGoal] = useState(null);
-  
+
   const [reportData, setReportData] = useState({});
   const [searchText, setSearchText] = useState('');
-  
+
   // Forms
   const [taskForm] = Form.useForm();
   const [feedbackForm] = Form.useForm();
@@ -200,25 +203,25 @@ const CEODashboard = () => {
       console.error('Error fetching strategic goals:', error);
       // Create initial goals if none exist
       const initialGoals = [
-        { 
-          goal_id: 1, 
-          goal_name: 'Revenue Growth', 
-          description: 'Achieve 20% revenue growth YoY', 
-          current_value: 15, 
-          target_value: 20, 
-          achieved: false, 
-          quarter: 1, 
+        {
+          goal_id: 1,
+          goal_name: 'Revenue Growth',
+          description: 'Achieve 20% revenue growth YoY',
+          current_value: 15,
+          target_value: 20,
+          achieved: false,
+          quarter: 1,
           year: 2024,
           weight: 1
         },
-        { 
-          goal_id: 2, 
-          goal_name: 'Market Expansion', 
-          description: 'Expand to 2 new international markets', 
-          current_value: 1, 
-          target_value: 2, 
-          achieved: false, 
-          quarter: 2, 
+        {
+          goal_id: 2,
+          goal_name: 'Market Expansion',
+          description: 'Expand to 2 new international markets',
+          current_value: 1,
+          target_value: 2,
+          achieved: false,
+          quarter: 2,
           year: 2024,
           weight: 1
         }
@@ -427,7 +430,7 @@ const CEODashboard = () => {
       if (type === 'leave') {
         const { error } = await supabase
           .from('employeeleave')
-          .update({ 
+          .update({
             leavestatus: status,
             approvedby: profile.empid,
             remarks: remarks
@@ -438,7 +441,7 @@ const CEODashboard = () => {
       } else if (type === 'loan') {
         const { error } = await supabase
           .from('loanrequest')
-          .update({ 
+          .update({
             status: status,
             processedby: profile.empid,
             processedat: dayjs().format('YYYY-MM-DD HH:mm:ss'),
@@ -486,7 +489,7 @@ const CEODashboard = () => {
         .select();
 
       if (error) throw error;
-      
+
       message.success('Task assigned successfully!');
       setIsTaskModalVisible(false);
       taskForm.resetFields();
@@ -512,7 +515,7 @@ const CEODashboard = () => {
         .eq('id', selectedTask.id);
 
       if (error) throw error;
-      
+
       message.success('Task updated successfully!');
       setIsEditTaskModalVisible(false);
       editTaskForm.resetFields();
@@ -532,7 +535,7 @@ const CEODashboard = () => {
         .eq('id', taskId);
 
       if (error) throw error;
-      
+
       message.success('Task deleted successfully!');
       fetchTasks();
     } catch (error) {
@@ -560,7 +563,7 @@ const CEODashboard = () => {
         .select();
 
       if (error) throw error;
-      
+
       message.success('Meeting scheduled successfully!');
       setIsMeetingModalVisible(false);
       meetingForm.resetFields();
@@ -588,7 +591,7 @@ const CEODashboard = () => {
         .eq('meetingid', selectedMeeting.meetingid);
 
       if (error) throw error;
-      
+
       message.success('Meeting updated successfully!');
       setIsEditMeetingModalVisible(false);
       editMeetingForm.resetFields();
@@ -608,7 +611,7 @@ const CEODashboard = () => {
         .eq('meetingid', meetingId);
 
       if (error) throw error;
-      
+
       message.success('Meeting deleted successfully!');
       fetchUpcomingMeetings();
     } catch (error) {
@@ -635,7 +638,7 @@ const CEODashboard = () => {
         .select();
 
       if (error) throw error;
-      
+
       message.success('Strategic goal added successfully!');
       setIsAddGoalModalVisible(false);
       goalForm.resetFields();
@@ -663,7 +666,7 @@ const CEODashboard = () => {
         .eq('goal_id', selectedGoal.goal_id);
 
       if (error) throw error;
-      
+
       message.success('Strategic goal updated successfully!');
       setIsEditGoalModalVisible(false);
       goalForm.resetFields();
@@ -683,7 +686,7 @@ const CEODashboard = () => {
         .eq('goal_id', goalId);
 
       if (error) throw error;
-      
+
       message.success('Strategic goal deleted successfully!');
       fetchStrategicGoals();
     } catch (error) {
@@ -712,7 +715,7 @@ const CEODashboard = () => {
         .select();
 
       if (error) throw error;
-      
+
       message.success('Feedback submitted successfully!');
       setIsFeedbackModalVisible(false);
       feedbackForm.resetFields();
@@ -772,20 +775,72 @@ const CEODashboard = () => {
     }
   };
 
+  // Export Functions
+  const exportToExcel = (data, filename, sheetName = 'Sheet1') => {
+    const worksheet = XLSX.utils.json_to_sheet(data);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
+    XLSX.writeFile(workbook, `${filename}.xlsx`);
+  };
+
+  const exportToWord = async (data, filename, title) => {
+    const tableRows = [
+      new TableRow({
+        children: Object.keys(data[0] || {}).map(key => 
+          new TableCell({
+            children: [new Paragraph({ text: key, bold: true })]
+          })
+        )
+      }),
+      ...data.map(row => 
+        new TableRow({
+          children: Object.values(row).map(value => 
+            new TableCell({
+              children: [new Paragraph({ text: String(value || '') })]
+            })
+          )
+        })
+      )
+    ];
+
+    const doc = new Document({
+      sections: [{
+        properties: {},
+        children: [
+          new Paragraph({ text: title, heading: "Heading1" }),
+          new DocTable({
+            rows: tableRows
+          })
+        ]
+      }]
+    });
+
+    const blob = await Packer.toBlob(doc);
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${filename}.docx`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   // Report Generation Functions
   const generateReport = async (values) => {
     try {
       setLoading(true);
       const reportConfig = {
         type: values.report_type,
-        period: values.period,
+        startDate: values.date_range?.[0]?.format('YYYY-MM-DD') || dayjs().subtract(7, 'days').format('YYYY-MM-DD'),
+        endDate: values.date_range?.[1]?.format('YYYY-MM-DD') || dayjs().format('YYYY-MM-DD'),
         employee_id: values.employee_id,
         format: values.format,
         ...values
       };
 
       let reportData = {};
-      
+
       switch (values.report_type) {
         case 'salary':
           reportData = await generateSalaryReport(reportConfig);
@@ -831,20 +886,14 @@ const CEODashboard = () => {
       setReportData(reportData);
       message.success('Report generated successfully!');
       fetchRecentReports();
-      
-      // Simulate download
-      if (values.format === 'pdf') {
-        const blob = new Blob([JSON.stringify(reportData.rawData, null, 2)], { type: 'application/pdf' });
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${values.report_type}_report_${dayjs().format('YYYYMMDD_HHmmss')}.pdf`;
-        document.body.appendChild(a);
-        a.click();
-        window.URL.revokeObjectURL(url);
-        document.body.removeChild(a);
+
+      // Export based on format
+      if (values.format === 'xlsx') {
+        exportToExcel(reportData.rawData, `${values.report_type}_report_${dayjs().format('YYYYMMDD_HHmmss')}`, values.report_type);
+      } else if (values.format === 'docx') {
+        await exportToWord(reportData.rawData, `${values.report_type}_report_${dayjs().format('YYYYMMDD_HHmmss')}`, `${values.report_type} Report`);
       }
-      
+
     } catch (error) {
       console.error('Error generating report:', error);
       message.error('Failed to generate report');
@@ -860,8 +909,8 @@ const CEODashboard = () => {
         *,
         employee:empid (first_name, last_name, department, role)
       `)
-      .gte('salarydate', dayjs().startOf(config.period).format('YYYY-MM-DD'))
-      .lte('salarydate', dayjs().endOf(config.period).format('YYYY-MM-DD'));
+      .gte('salarydate', config.startDate)
+      .lte('salarydate', config.endDate);
 
     const chartData = data?.map(item => ({
       type: `${item.employee?.first_name} ${item.employee?.last_name}`,
@@ -907,8 +956,8 @@ const CEODashboard = () => {
         *,
         employee:empid (first_name, last_name, department)
       `)
-      .gte('date', dayjs().startOf(config.period).format('YYYY-MM-DD'))
-      .lte('date', dayjs().endOf(config.period).format('YYYY-MM-DD'));
+      .gte('date', config.startDate)
+      .lte('date', config.endDate);
 
     const statusCount = data?.reduce((acc, item) => {
       acc[item.status] = (acc[item.status] || 0) + 1;
@@ -931,8 +980,8 @@ const CEODashboard = () => {
         employee:empid (first_name, last_name, department),
         leavetype:leavetypeid (leavetype)
       `)
-      .gte('leavefromdate', dayjs().startOf(config.period).format('YYYY-MM-DD'))
-      .lte('leavetodate', dayjs().endOf(config.period).format('YYYY-MM-DD'));
+      .gte('leavefromdate', config.startDate)
+      .lte('leavetodate', config.endDate);
 
     const statusCount = data?.reduce((acc, item) => {
       acc[item.leavestatus] = (acc[item.leavestatus] || 0) + 1;
@@ -1005,7 +1054,7 @@ const CEODashboard = () => {
     employee.role?.toLowerCase().includes(searchText.toLowerCase())
   );
 
-  // Table Columns
+  // Table Columns (rest of the columns remain the same as in your original code)
   const approvalColumns = [
     {
       title: 'Request Details',
@@ -1046,8 +1095,8 @@ const CEODashboard = () => {
     {
       title: 'Duration/Amount',
       key: 'details',
-      render: (_, record) => (
-        <Text strong>
+      render: (record) => (
+        <Text strong style={{ color: record.type === 'loan' ? '#f50' : '#52c41a' }}>
           {record.type === 'leave' ? `${record.duration} days` : `$${record.amount}`}
         </Text>
       )
@@ -1055,98 +1104,129 @@ const CEODashboard = () => {
     {
       title: 'Actions',
       key: 'actions',
-      render: (_, record) => (
+      render: (record) => (
         <Space>
-          <Popconfirm
-            title="Approve Request"
-            description="Are you sure you want to approve this request?"
-            onConfirm={() => handleApproval(record.type, record.leaveid || record.loanrequestid, 'approved')}
-            okText="Yes"
-            cancelText="No"
+          <Button
+            type="primary"
+            size="small"
+            icon={<CheckCircleOutlined />}
+            onClick={() => handleApproval(record.type, record.leaveid || record.loanrequestid, 'approved')}
           >
-            <Button 
-              type="primary" 
-              size="small" 
-              icon={<CheckCircleOutlined />}
-            >
-              Approve
-            </Button>
-          </Popconfirm>
-          <Popconfirm
-            title="Reject Request"
-            description="Are you sure you want to reject this request?"
-            onConfirm={() => handleApproval(record.type, record.leaveid || record.loanrequestid, 'rejected')}
-            okText="Yes"
-            cancelText="No"
+            Approve
+          </Button>
+          <Button
+            danger
+            size="small"
+            icon={<CloseCircleOutlined />}
+            onClick={() => handleApproval(record.type, record.leaveid || record.loanrequestid, 'rejected')}
           >
-            <Button 
-              danger 
-              size="small" 
-              icon={<CloseCircleOutlined />}
-            >
-              Reject
-            </Button>
-          </Popconfirm>
+            Reject
+          </Button>
         </Space>
       )
     }
   ];
 
-  const departmentColumns = [
+  const employeeColumns = [
     {
-      title: 'Department',
-      dataIndex: 'department',
-      key: 'department',
-      render: (text) => <Text strong>{text}</Text>
-    },
-    {
-      title: 'Performance',
-      dataIndex: 'performance',
-      key: 'performance',
-      render: (value) => (
-        <Progress 
-          percent={value} 
-          status={value >= 90 ? 'success' : value >= 80 ? 'active' : 'exception'} 
-          style={{ width: 120 }} 
-        />
-      )
-    },
-    {
-      title: 'Growth',
-      dataIndex: 'growth',
-      key: 'growth',
-      render: (value) => (
+      title: 'Employee',
+      dataIndex: 'first_name',
+      key: 'name',
+      render: (text, record) => (
         <Space>
-          <Text strong style={{ color: value >= 10 ? '#52c41a' : '#faad14' }}>{value}%</Text>
-          <ArrowUpOutlined style={{ color: value >= 10 ? '#52c41a' : '#faad14' }} />
+          <Avatar size="small" style={{ backgroundColor: '#1890ff' }}>
+            {record.first_name?.[0]}{record.last_name?.[0]}
+          </Avatar>
+          <div>
+            <Text strong>{record.first_name} {record.last_name}</Text>
+            <br />
+            <Text type="secondary" style={{ fontSize: '12px' }}>{record.role}</Text>
+          </div>
         </Space>
       )
     },
     {
-      title: 'Revenue Contribution',
-      dataIndex: 'revenue',
-      key: 'revenue',
-      render: (value) => `$${value.toLocaleString()}`
+      title: 'Department',
+      dataIndex: 'department',
+      key: 'department',
+      render: (dept) => <Tag color="blue">{dept}</Tag>
+    },
+    {
+      title: 'KPI Score',
+      dataIndex: 'kpiscore',
+      key: 'kpiscore',
+      render: (score) => (
+        <Progress
+          percent={score || 0}
+          size="small"
+          status={score >= 80 ? 'success' : score >= 60 ? 'normal' : 'exception'}
+        />
+      )
+    },
+    {
+      title: 'Status',
+      dataIndex: 'status',
+      key: 'status',
+      render: (status) => (
+        <Badge
+          status={status === 'Active' ? 'success' : 'default'}
+          text={status}
+        />
+      )
+    },
+    {
+      title: 'Actions',
+      key: 'actions',
+      render: (record) => (
+        <Space>
+          <Tooltip title="Give Feedback">
+            <Button
+              size="small"
+              icon={<MessageOutlined />}
+              onClick={() => {
+                setSelectedEmployee(record);
+                setIsFeedbackModalVisible(true);
+              }}
+            />
+          </Tooltip>
+          <Tooltip title="Promote">
+            <Button
+              size="small"
+              icon={<CrownOutlined />}
+              onClick={() => {
+                setSelectedEmployee(record);
+                setIsPromotionModalVisible(true);
+              }}
+            />
+          </Tooltip>
+        </Space>
+      )
     }
   ];
 
   const meetingColumns = [
     {
-      title: 'Meeting Topic',
+      title: 'Meeting',
       dataIndex: 'topic',
       key: 'topic',
       render: (text, record) => (
         <Space direction="vertical" size={0}>
           <Text strong>{text}</Text>
-          <Text type="secondary" style={{ fontSize: '12px' }}>{record.type}</Text>
+          <Text type="secondary" style={{ fontSize: '12px' }}>{record.description}</Text>
         </Space>
       )
     },
     {
       title: 'Date & Time',
-      dataIndex: 'date',
-      key: 'date',
-      render: (date) => dayjs(date).format('DD/MM/YYYY HH:mm')
+      key: 'datetime',
+      render: (record) => (
+        <Space direction="vertical" size={0}>
+          <Text>{dayjs(record.date).format('DD/MM/YYYY')}</Text>
+          <Text type="secondary" style={{ fontSize: '12px' }}>
+            {record.starttime} - {record.endtime}
+          </Text>
+        </Space>
+      )
     },
     {
       title: 'Location',
@@ -1166,11 +1246,10 @@ const CEODashboard = () => {
     {
       title: 'Actions',
       key: 'actions',
-      render: (_, record) => (
+      render: (record) => (
         <Space>
-          <Button 
-            type="link" 
-            size="small" 
+          <Button
+            size="small"
             icon={<EditOutlined />}
             onClick={() => {
               setSelectedMeeting(record);
@@ -1178,6 +1257,7 @@ const CEODashboard = () => {
                 topic: record.topic,
                 description: record.description,
                 date: dayjs(record.date),
+                end_time: dayjs(record.endtime, 'HH:mm:ss'),
                 location: record.location,
                 type: record.type,
                 status: record.status
@@ -1188,18 +1268,12 @@ const CEODashboard = () => {
             Edit
           </Button>
           <Popconfirm
-            title="Delete Meeting"
-            description="Are you sure you want to delete this meeting?"
+            title="Are you sure to delete this meeting?"
             onConfirm={() => deleteMeeting(record.meetingid)}
             okText="Yes"
             cancelText="No"
           >
-            <Button 
-              danger 
-              type="link" 
-              size="small" 
-              icon={<DeleteOutlined />}
-            >
+            <Button size="small" danger icon={<DeleteOutlined />}>
               Delete
             </Button>
           </Popconfirm>
@@ -1222,16 +1296,10 @@ const CEODashboard = () => {
     },
     {
       title: 'Assignee',
-      dataIndex: ['assignee', 'first_name'],
       key: 'assignee',
-      render: (text, record) => 
-        `${record.assignee?.first_name} ${record.assignee?.last_name}`
-    },
-    {
-      title: 'Due Date',
-      dataIndex: 'due_date',
-      key: 'due_date',
-      render: (date) => dayjs(date).format('DD/MM/YYYY HH:mm')
+      render: (record) => (
+        <Text>{record.assignee?.first_name} {record.assignee?.last_name}</Text>
+      )
     },
     {
       title: 'Priority',
@@ -1242,6 +1310,12 @@ const CEODashboard = () => {
           {priority.toUpperCase()}
         </Tag>
       )
+    },
+    {
+      title: 'Due Date',
+      dataIndex: 'due_date',
+      key: 'due_date',
+      render: (date) => dayjs(date).format('DD/MM/YYYY HH:mm')
     },
     {
       title: 'Status',
@@ -1256,11 +1330,10 @@ const CEODashboard = () => {
     {
       title: 'Actions',
       key: 'actions',
-      render: (_, record) => (
+      render: (record) => (
         <Space>
-          <Button 
-            type="link" 
-            size="small" 
+          <Button
+            size="small"
             icon={<EditOutlined />}
             onClick={() => {
               setSelectedTask(record);
@@ -1278,18 +1351,94 @@ const CEODashboard = () => {
             Edit
           </Button>
           <Popconfirm
-            title="Delete Task"
-            description="Are you sure you want to delete this task?"
+            title="Are you sure to delete this task?"
             onConfirm={() => deleteTask(record.id)}
             okText="Yes"
             cancelText="No"
           >
-            <Button 
-              danger 
-              type="link" 
-              size="small" 
-              icon={<DeleteOutlined />}
-            >
+            <Button size="small" danger icon={<DeleteOutlined />}>
+              Delete
+            </Button>
+          </Popconfirm>
+        </Space>
+      )
+    }
+  ];
+
+  const goalColumns = [
+    {
+      title: 'Goal',
+      dataIndex: 'goal_name',
+      key: 'goal_name',
+      render: (text, record) => (
+        <Space direction="vertical" size={0}>
+          <Text strong>{text}</Text>
+          <Text type="secondary" style={{ fontSize: '12px' }}>{record.description}</Text>
+        </Space>
+      )
+    },
+    {
+      title: 'Progress',
+      key: 'progress',
+      render: (record) => (
+        <Space direction="vertical" style={{ width: '100%' }}>
+          <Progress
+            percent={Math.round((record.current_value / record.target_value) * 100)}
+            status={record.achieved ? 'success' : 'active'}
+          />
+          <Text type="secondary" style={{ fontSize: '12px' }}>
+            {record.current_value} / {record.target_value}
+          </Text>
+        </Space>
+      )
+    },
+    {
+      title: 'Quarter',
+      dataIndex: 'quarter',
+      key: 'quarter',
+      render: (quarter) => `Q${quarter} ${dayjs().year()}`
+    },
+    {
+      title: 'Status',
+      key: 'status',
+      render: (record) => (
+        <Tag color={record.achieved ? 'success' : 'processing'}>
+          {record.achieved ? 'ACHIEVED' : 'IN PROGRESS'}
+        </Tag>
+      )
+    },
+    {
+      title: 'Actions',
+      key: 'actions',
+      render: (record) => (
+        <Space>
+          <Button
+            size="small"
+            icon={<EditOutlined />}
+            onClick={() => {
+              setSelectedGoal(record);
+              goalForm.setFieldsValue({
+                goal_name: record.goal_name,
+                description: record.description,
+                year: record.year,
+                quarter: record.quarter,
+                target_value: record.target_value,
+                current_value: record.current_value,
+                achieved: record.achieved,
+                weight: record.weight
+              });
+              setIsEditGoalModalVisible(true);
+            }}
+          >
+            Edit
+          </Button>
+          <Popconfirm
+            title="Are you sure to delete this goal?"
+            onConfirm={() => deleteStrategicGoal(record.goal_id)}
+            okText="Yes"
+            cancelText="No"
+          >
+            <Button size="small" danger icon={<DeleteOutlined />}>
               Delete
             </Button>
           </Popconfirm>
@@ -1299,843 +1448,552 @@ const CEODashboard = () => {
   ];
 
   return (
-    <div style={{ padding: '16px', maxWidth: '1400px', margin: '0 auto' }}>
-      {/* Header */}
-      <Card size="small" style={{ 
-        marginBottom: 16, 
-        background: 'linear-gradient(135deg, #fa541c 0%, #d4380d 100%)',
-        border: 'none'
-      }}>
-        <Row justify="space-between" align="middle">
-          <Col>
-            <Space>
-              <CrownOutlined style={{ color: 'white', fontSize: '24px' }} />
-              <Title level={2} style={{ color: 'white', margin: 0 }}>
-                CEO Dashboard
-              </Title>
-              <Badge count={<CrownOutlined />} offset={[-5, 0]}>
-                <Tag color="white" style={{ color: '#fa541c', fontWeight: 'bold' }}>
-                  {profile?.first_name} {profile?.last_name}
-                </Tag>
-              </Badge>
-            </Space>
-          </Col>
-          <Col>
-            <Space>
-              <Button 
-                type="default" 
-                icon={<ReloadOutlined />} 
-                onClick={initializeDashboard}
-                style={{ color: 'white', borderColor: 'white' }}
-              >
-                Refresh
-              </Button>
-              <Text style={{ color: 'white' }}>
-                Executive Overview • {dayjs().format('MMMM YYYY')}
-              </Text>
-            </Space>
-          </Col>
-        </Row>
-      </Card>
-
-      {/* Welcome Alert */}
-      <Alert
-        message={`Welcome back, ${profile?.first_name || 'CEO'}!`}
-        description="Monitor company performance, strategic goals, department metrics, and overall business health."
-        type="info"
-        showIcon
-        style={{ marginBottom: 16 }}
-        action={
-          <Space>
-            <Button size="small" onClick={() => setActiveTab('dashboard')}>
-              Dashboard
-            </Button>
-            <Button size="small" onClick={() => setActiveTab('approvals')}>
-              Pending Approvals ({pendingApprovals.length})
-            </Button>
-          </Space>
-        }
-      />
-
-      {/* Main Tabs */}
-      <Card>
-        <Tabs activeKey={activeTab} onChange={setActiveTab} type="card">
-          {/* Dashboard Tab */}
-          <TabPane tab="Executive Overview" key="dashboard">
-            {/* Quick Stats */}
-            <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
-              <Col xs={24} sm={12} md={6}>
-                <Card>
-                  <Statistic
-                    title="Company Revenue"
-                    value={companyMetrics.companyRevenue}
-                    prefix="$"
-                    valueStyle={{ color: '#1890ff' }}
-                    suffix={<ArrowUpOutlined style={{ color: '#52c41a' }} />}
-                  />
-                </Card>
+    <div style={{ padding: '24px', background: '#f5f5f5', minHeight: '100vh' }}>
+      <Row gutter={[24, 24]}>
+        <Col span={24}>
+          <Card>
+            <Row justify="space-between" align="middle">
+              <Col>
+                <Title level={2} style={{ margin: 0 }}>
+                  <CrownOutlined style={{ marginRight: 12, color: '#faad14' }} />
+                  CEO Dashboard
+                </Title>
+                <Text type="secondary">Welcome back, {profile?.first_name} {profile?.last_name}</Text>
               </Col>
-              <Col xs={24} sm={12} md={6}>
-                <Card>
-                  <Statistic
-                    title="Employee Count"
-                    value={companyMetrics.totalEmployees}
-                    prefix={<TeamOutlined />}
-                    valueStyle={{ color: '#52c41a' }}
-                  />
-                </Card>
-              </Col>
-              <Col xs={24} sm={12} md={6}>
-                <Card>
-                  <Statistic
-                    title="Profit Margin"
-                    value={companyMetrics.profitMargin}
-                    suffix="%"
-                    prefix={<PieChartOutlined />}
-                    valueStyle={{ color: '#fa8c16' }}
-                  />
-                </Card>
-              </Col>
-              <Col xs={24} sm={12} md={6}>
-                <Card>
-                  <Statistic
-                    title="Customer Satisfaction"
-                    value={companyMetrics.customerSatisfaction}
-                    suffix="/5"
-                    prefix={<StarOutlined />}
-                    valueStyle={{ color: '#722ed1' }}
-                  />
-                </Card>
-              </Col>
-            </Row>
-
-            <Row gutter={[16, 16]}>
-              {/* Strategic Goals */}
-              <Col xs={24} lg={12}>
-                <Card 
-                  title={
-                    <Space>
-                      <TrophyOutlined style={{ color: '#faad14' }} />
-                      Strategic Goals
-                    </Space>
-                  }
-                  extra={
-                    <Button 
-                      type="link" 
-                      icon={<PlusOutlined />}
-                      onClick={() => setIsAddGoalModalVisible(true)}
-                    >
-                      Add Goal
-                    </Button>
-                  }
-                  loading={loading}
-                >
-                  <List
-                    dataSource={strategicGoals}
-                    renderItem={goal => (
-                      <List.Item
-                        actions={[
-                          <Button 
-                            type="link" 
-                            icon={<EditOutlined />}
-                            onClick={() => {
-                              setSelectedGoal(goal);
-                              goalForm.setFieldsValue({
-                                goal_name: goal.goal_name,
-                                description: goal.description,
-                                year: goal.year,
-                                quarter: goal.quarter,
-                                target_value: goal.target_value,
-                                current_value: goal.current_value,
-                                achieved: goal.achieved,
-                                weight: goal.weight
-                              });
-                              setIsEditGoalModalVisible(true);
-                            }}
-                          />,
-                          <Popconfirm
-                            title="Delete Goal"
-                            description="Are you sure you want to delete this goal?"
-                            onConfirm={() => deleteStrategicGoal(goal.goal_id)}
-                            okText="Yes"
-                            cancelText="No"
-                          >
-                            <Button type="link" danger icon={<DeleteOutlined />} />
-                          </Popconfirm>
-                        ]}
-                      >
-                        <List.Item.Meta
-                          title={goal.goal_name}
-                          description={
-                            <Space direction="vertical" size={0}>
-                              <Text>{goal.description}</Text>
-                              <Progress 
-                                percent={Math.round((goal.current_value / goal.target_value) * 100)} 
-                                status={goal.achieved ? 'success' : 'active'}
-                                style={{ marginTop: 8, width: '200px' }}
-                              />
-                              <Text type="secondary">
-                                Progress: {goal.current_value} / {goal.target_value} • Q{goal.quarter} {goal.year}
-                              </Text>
-                            </Space>
-                          }
-                        />
-                        <Tag color={goal.achieved ? 'green' : 'blue'}>
-                          {goal.achieved ? 'Achieved' : 'In Progress'}
-                        </Tag>
-                      </List.Item>
-                    )}
-                  />
-                </Card>
-              </Col>
-
-              {/* Department Performance */}
-              <Col xs={24} lg={12}>
-                <Card title="Department Performance" loading={loading}>
-                  <Table
-                    dataSource={departmentPerformance}
-                    columns={departmentColumns}
-                    pagination={false}
-                    size="small"
-                  />
-                </Card>
-              </Col>
-
-              {/* Pending Approvals */}
-              <Col xs={24} lg={12}>
-                <Card 
-                  title="Pending Approvals" 
-                  extra={
-                    <Button 
-                      type="link" 
-                      icon={<EyeOutlined />}
-                      onClick={() => setActiveTab('approvals')}
-                    >
-                      View All ({pendingApprovals.length})
-                    </Button>
-                  }
-                >
-                  {pendingApprovals.length > 0 ? (
-                    <Table
-                      dataSource={pendingApprovals.slice(0, 5)}
-                      columns={approvalColumns}
-                      pagination={false}
-                      size="small"
-                    />
-                  ) : (
-                    <div style={{ textAlign: 'center', padding: '20px', color: '#999' }}>
-                      <CheckCircleOutlined style={{ fontSize: '24px', marginBottom: 8 }} />
-                      <div>No pending approvals</div>
-                    </div>
-                  )}
-                </Card>
-              </Col>
-
-              {/* Executive Summary */}
-              <Col xs={24} lg={12}>
-                <Card title="Executive Summary">
-                  <Row gutter={[16, 16]}>
-                    <Col xs={24} sm={12}>
-                      <Card size="small" hoverable>
-                        <Space direction="vertical" style={{ width: '100%' }}>
-                          <Text strong>Market Share</Text>
-                          <Statistic value={financialOverview.marketShare} suffix="%" 
-                            valueStyle={{ color: '#1890ff', fontSize: '24px' }} />
-                          <Text type="secondary">+2.3% from last quarter</Text>
-                        </Space>
-                      </Card>
-                    </Col>
-                    <Col xs={24} sm={12}>
-                      <Card size="small" hoverable>
-                        <Space direction="vertical" style={{ width: '100%' }}>
-                          <Text strong>Employee Retention</Text>
-                          <Statistic value={financialOverview.employeeRetention} suffix="%" 
-                            valueStyle={{ color: '#52c41a', fontSize: '24px' }} />
-                          <Text type="secondary">Industry average: 88%</Text>
-                        </Space>
-                      </Card>
-                    </Col>
-                    <Col xs={24} sm={12}>
-                      <Card size="small" hoverable>
-                        <Space direction="vertical" style={{ width: '100%' }}>
-                          <Text strong>Revenue Growth</Text>
-                          <Statistic value={financialOverview.revenueGrowth} suffix="%" 
-                            valueStyle={{ color: '#fa8c16', fontSize: '24px' }} />
-                          <Text type="secondary">YoY growth rate</Text>
-                        </Space>
-                      </Card>
-                    </Col>
-                    <Col xs={24} sm={12}>
-                      <Card size="small" hoverable>
-                        <Space direction="vertical" style={{ width: '100%' }}>
-                          <Text strong>Operating Margin</Text>
-                          <Statistic value={financialOverview.operatingMargin} suffix="%" 
-                            valueStyle={{ color: '#722ed1', fontSize: '24px' }} />
-                          <Text type="secondary">Above target: 25%</Text>
-                        </Space>
-                      </Card>
-                    </Col>
-                  </Row>
-                </Card>
-              </Col>
-            </Row>
-          </TabPane>
-
-          {/* Approvals Tab */}
-          <TabPane tab={`Approvals (${pendingApprovals.length})`} key="approvals">
-            <Card
-              title="Pending Approvals"
-              extra={
+              <Col>
                 <Space>
-                  <Button 
+                  <Button
+                    type="primary"
                     icon={<DownloadOutlined />}
-                    onClick={() => {
-                      reportForm.setFieldsValue({
-                        report_type: 'leave',
-                        period: 'month'
-                      });
-                      setIsReportModalVisible(true);
-                    }}
+                    onClick={() => setIsReportModalVisible(true)}
                   >
                     Generate Report
                   </Button>
-                  <Button 
-                    type="primary" 
+                  <Button
                     icon={<ReloadOutlined />}
-                    onClick={fetchPendingApprovals}
+                    onClick={initializeDashboard}
                   >
                     Refresh
                   </Button>
                 </Space>
-              }
-            >
-              {pendingApprovals.length > 0 ? (
-                <Table
-                  dataSource={pendingApprovals}
-                  columns={approvalColumns}
-                  pagination={{ pageSize: 10 }}
+              </Col>
+            </Row>
+          </Card>
+        </Col>
+
+        {/* Key Metrics */}
+        <Col span={24}>
+          <Row gutter={[24, 24]}>
+            <Col xs={24} sm={12} lg={6}>
+              <Card>
+                <Statistic
+                  title="Total Employees"
+                  value={companyMetrics.totalEmployees}
+                  prefix={<TeamOutlined />}
+                  valueStyle={{ color: '#1890ff' }}
                 />
-              ) : (
-                <div style={{ textAlign: 'center', padding: '40px', color: '#999' }}>
-                  <CheckCircleOutlined style={{ fontSize: '48px', marginBottom: 16 }} />
-                  <div style={{ fontSize: '16px' }}>No pending approvals</div>
-                  <Text type="secondary">All requests have been processed</Text>
-                </div>
-              )}
-            </Card>
-          </TabPane>
+              </Card>
+            </Col>
+            <Col xs={24} sm={12} lg={6}>
+              <Card>
+                <Statistic
+                  title="Company Revenue"
+                  value={companyMetrics.companyRevenue}
+                  prefix={<DollarOutlined />}
+                  precision={2}
+                  valueStyle={{ color: '#52c41a' }}
+                  formatter={value => `$${(value / 1000).toFixed(0)}k`}
+                />
+              </Card>
+            </Col>
+            <Col xs={24} sm={12} lg={6}>
+              <Card>
+                <Statistic
+                  title="Profit Margin"
+                  value={companyMetrics.profitMargin}
+                  suffix="%"
+                  prefix={<LineChartOutlined />}
+                  valueStyle={{ color: '#faad14' }}
+                />
+              </Card>
+            </Col>
+            <Col xs={24} sm={12} lg={6}>
+              <Card>
+                <Statistic
+                  title="Customer Satisfaction"
+                  value={companyMetrics.customerSatisfaction}
+                  prefix={<StarOutlined />}
+                  precision={1}
+                  valueStyle={{ color: '#eb2f96' }}
+                />
+              </Card>
+            </Col>
+          </Row>
+        </Col>
 
-          {/* Reports Tab */}
-          <TabPane tab="Reports & Analytics" key="reports">
-            <Row gutter={[16, 16]}>
-              <Col span={24}>
-                <Card
-                  title="Executive Reports"
-                  extra={
-                    <Space>
-                      <Button 
-                        type="primary" 
-                        icon={<PlusOutlined />}
-                        onClick={() => setIsReportModalVisible(true)}
-                      >
-                        Generate New Report
-                      </Button>
-                    </Space>
-                  }
-                >
-                  <Row gutter={[16, 16]}>
-                    <Col span={12}>
-                      <Card title="Quick Reports" size="small">
-                        <Space direction="vertical" style={{ width: '100%' }}>
-                          {[
-                            { type: 'financial', name: 'Financial Report', icon: <FundOutlined />, color: '#1890ff' },
-                            { type: 'performance', name: 'Performance Report', icon: <BarChartOutlined />, color: '#52c41a' },
-                            { type: 'salary', name: 'Salary Report', icon: <DollarOutlined />, color: '#faad14' },
-                            { type: 'attendance', name: 'Attendance Report', icon: <CalendarOutlined />, color: '#722ed1' },
-                            { type: 'staff', name: 'Staff Report', icon: <TeamOutlined />, color: '#fa541c' },
-                            { type: 'kpi', name: 'KPI Report', icon: <LineChartOutlined />, color: '#13c2c2' }
-                          ].map(report => (
-                            <Button 
-                              key={report.type}
-                              icon={report.icon}
-                              block
-                              style={{ 
-                                textAlign: 'left',
-                                borderColor: report.color,
-                                color: report.color
-                              }}
-                              onClick={() => {
-                                reportForm.setFieldsValue({
-                                  report_type: report.type,
-                                  period: 'month'
-                                });
-                                setIsReportModalVisible(true);
-                              }}
-                            >
-                              {report.name}
-                            </Button>
-                          ))}
-                        </Space>
-                      </Card>
-                    </Col>
-                    <Col span={12}>
-                      <Card title="Recent Reports" size="small">
-                        {reports.length > 0 ? (
-                          <List
-                            dataSource={reports}
-                            renderItem={report => (
-                              <List.Item
-                                actions={[
-                                  <Button 
-                                    type="link" 
-                                    icon={<DownloadOutlined />} 
-                                    size="small"
-                                    onClick={() => {
-                                      // Simulate download
-                                      message.info(`Downloading ${report.name}...`);
-                                    }}
-                                  >
-                                    Download
-                                  </Button>
-                                ]}
-                              >
-                                <List.Item.Meta
-                                  avatar={<Avatar icon={<FileTextOutlined />} />}
-                                  title={report.name}
-                                  description={
-                                    <Space direction="vertical" size={0}>
-                                      <Text>Type: {report.type} | Format: {report.format}</Text>
-                                      <Text type="secondary">
-                                        Created: {dayjs(report.created_at).format('DD/MM/YYYY HH:mm')}
-                                      </Text>
-                                    </Space>
-                                  }
-                                />
-                              </List.Item>
-                            )}
-                          />
-                        ) : (
-                          <div style={{ textAlign: 'center', padding: '20px', color: '#999' }}>
-                            <FileTextOutlined style={{ fontSize: '24px', marginBottom: 8 }} />
-                            <div>No reports generated yet</div>
-                          </div>
-                        )}
-                      </Card>
-                    </Col>
-                  </Row>
-
-                  {reportData.chartData && (
-                    <Card title="Report Visualization" style={{ marginTop: 16 }}>
-                      <Row gutter={[16, 16]}>
-                        <Col span={16}>
-                          {renderChart(reportData)}
-                        </Col>
-                        <Col span={8}>
-                          <Card title="Report Summary" size="small">
-                            <List
-                              dataSource={reportData.chartData.slice(0, 10)}
-                              renderItem={item => (
-                                <List.Item>
-                                  <Text>{item.type}:</Text>
-                                  <Text strong>
-                                    {typeof item.value === 'number' ? item.value.toLocaleString() : item.value}
-                                  </Text>
-                                </List.Item>
-                              )}
+        {/* Main Content */}
+        <Col span={24}>
+          <Card>
+            <Tabs activeKey={activeTab} onChange={setActiveTab}>
+              {/* Dashboard Tab */}
+              <TabPane tab="Dashboard" key="dashboard">
+                <Row gutter={[24, 24]}>
+                  <Col span={24}>
+                    <Title level={4}>Strategic Goals Progress</Title>
+                    <Row gutter={[24, 24]}>
+                      {strategicGoals.map(goal => (
+                        <Col xs={24} sm={12} lg={8} key={goal.goal_id}>
+                          <Card>
+                            <div style={{ marginBottom: 16 }}>
+                              <Text strong>{goal.goal_name}</Text>
+                              <br />
+                              <Text type="secondary" style={{ fontSize: '12px' }}>
+                                {goal.description}
+                              </Text>
+                            </div>
+                            <Progress
+                              percent={Math.round((goal.current_value / goal.target_value) * 100)}
+                              status={goal.achieved ? 'success' : 'active'}
                             />
-                            {reportData.rawData && (
-                              <div style={{ marginTop: 16 }}>
-                                <Text type="secondary">
-                                  Total Records: {reportData.rawData.length}
-                                </Text>
-                              </div>
-                            )}
+                            <div style={{ marginTop: 8, display: 'flex', justifyContent: 'space-between' }}>
+                              <Text type="secondary">
+                                {goal.current_value} / {goal.target_value}
+                              </Text>
+                              <Tag color={goal.achieved ? 'success' : 'processing'}>
+                                {goal.achieved ? 'Achieved' : 'In Progress'}
+                              </Tag>
+                            </div>
                           </Card>
+                        </Col>
+                      ))}
+                    </Row>
+                  </Col>
+
+                  <Col xs={24} lg={12}>
+                    <Card title="Department Performance">
+                      <Bar
+                        data={departmentPerformance}
+                        xField="performance"
+                        yField="department"
+                        seriesField="department"
+                        isStack={true}
+                        legend={{ position: 'top-left' }}
+                      />
+                    </Card>
+                  </Col>
+
+                  <Col xs={24} lg={12}>
+                    <Card title="Financial Overview">
+                      <Row gutter={[16, 16]}>
+                        <Col span={12}>
+                          <Statistic
+                            title="Market Share"
+                            value={financialOverview.marketShare}
+                            suffix="%"
+                            valueStyle={{ color: '#1890ff' }}
+                          />
+                        </Col>
+                        <Col span={12}>
+                          <Statistic
+                            title="Employee Retention"
+                            value={financialOverview.employeeRetention}
+                            suffix="%"
+                            valueStyle={{ color: '#52c41a' }}
+                          />
+                        </Col>
+                        <Col span={12}>
+                          <Statistic
+                            title="Revenue Growth"
+                            value={financialOverview.revenueGrowth}
+                            suffix="%"
+                            valueStyle={{ color: '#faad14' }}
+                          />
+                        </Col>
+                        <Col span={12}>
+                          <Statistic
+                            title="Operating Margin"
+                            value={financialOverview.operatingMargin}
+                            suffix="%"
+                            valueStyle={{ color: '#eb2f96' }}
+                          />
                         </Col>
                       </Row>
                     </Card>
-                  )}
-                </Card>
-              </Col>
-            </Row>
-          </TabPane>
+                  </Col>
+                </Row>
+              </TabPane>
 
-          {/* Management Tab */}
-          <TabPane tab="Management" key="management">
-            <Row gutter={[16, 16]}>
-              {/* Employee Management */}
-              <Col span={12}>
-                <Card 
-                  title="Employee Management"
-                  extra={
+              {/* Approvals Tab */}
+              <TabPane tab="Pending Approvals" key="approvals">
+                <Table
+                  columns={approvalColumns}
+                  dataSource={pendingApprovals}
+                  rowKey={record => record.leaveid || record.loanrequestid}
+                  pagination={{ pageSize: 10 }}
+                />
+              </TabPane>
+
+              {/* Employees Tab */}
+              <TabPane tab="Employees" key="employees">
+                <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+                  <Col span={12}>
+                    <Input
+                      placeholder="Search employees by name, department, or role..."
+                      prefix={<SearchOutlined />}
+                      value={searchText}
+                      onChange={(e) => setSearchText(e.target.value)}
+                      allowClear
+                    />
+                  </Col>
+                  <Col span={12} style={{ textAlign: 'right' }}>
                     <Space>
-                      <Input
-                        placeholder="Search employees..."
-                        prefix={<SearchOutlined />}
-                        value={searchText}
-                        onChange={(e) => setSearchText(e.target.value)}
-                        style={{ width: 200 }}
-                      />
-                      <Button 
-                        type="primary" 
-                        icon={<UserAddOutlined />}
-                        onClick={() => setIsPromotionModalVisible(true)}
+                      <Button
+                        type="primary"
+                        icon={<DownloadOutlined />}
+                        onClick={() => exportToExcel(allEmployees, 'employees_report', 'Employees')}
                       >
-                        Promote Employee
+                        Export to Excel
+                      </Button>
+                      <Button
+                        icon={<FileTextOutlined />}
+                        onClick={() => exportToWord(allEmployees, 'employees_report', 'Employees Report')}
+                      >
+                        Export to Word
                       </Button>
                     </Space>
-                  }
-                >
-                  <List
-                    dataSource={searchText ? filteredEmployees : allEmployees.slice(0, 6)}
-                    renderItem={employee => (
-                      <List.Item
-                        actions={[
-                          <Button 
-                            type="link" 
-                            icon={<MessageOutlined />}
-                            onClick={() => {
-                              setSelectedEmployee(employee);
-                              setIsFeedbackModalVisible(true);
-                            }}
+                  </Col>
+                </Row>
+                <Table
+                  columns={employeeColumns}
+                  dataSource={filteredEmployees}
+                  rowKey="empid"
+                  pagination={{ pageSize: 10 }}
+                />
+              </TabPane>
+
+              {/* Meetings Tab */}
+              <TabPane tab="Meetings" key="meetings">
+                <div style={{ marginBottom: 16, textAlign: 'right' }}>
+                  <Button
+                    type="primary"
+                    icon={<PlusOutlined />}
+                    onClick={() => setIsMeetingModalVisible(true)}
+                  >
+                    Schedule Meeting
+                  </Button>
+                </div>
+                <Table
+                  columns={meetingColumns}
+                  dataSource={meetings}
+                  rowKey="meetingid"
+                  pagination={{ pageSize: 10 }}
+                />
+              </TabPane>
+
+              {/* Tasks Tab */}
+              <TabPane tab="Tasks" key="tasks">
+                <div style={{ marginBottom: 16, textAlign: 'right' }}>
+                  <Button
+                    type="primary"
+                    icon={<PlusOutlined />}
+                    onClick={() => setIsTaskModalVisible(true)}
+                  >
+                    Assign Task
+                  </Button>
+                </div>
+                <Table
+                  columns={taskColumns}
+                  dataSource={tasks}
+                  rowKey="id"
+                  pagination={{ pageSize: 10 }}
+                />
+              </TabPane>
+
+              {/* Strategic Goals Tab */}
+              <TabPane tab="Strategic Goals" key="goals">
+                <div style={{ marginBottom: 16, textAlign: 'right' }}>
+                  <Button
+                    type="primary"
+                    icon={<PlusOutlined />}
+                    onClick={() => setIsAddGoalModalVisible(true)}
+                  >
+                    Add Goal
+                  </Button>
+                </div>
+                <Table
+                  columns={goalColumns}
+                  dataSource={strategicGoals}
+                  rowKey="goal_id"
+                  pagination={{ pageSize: 10 }}
+                />
+              </TabPane>
+
+              {/* Reports Tab */}
+              <TabPane tab="Reports" key="reports">
+                <Row gutter={[24, 24]}>
+                  <Col span={24}>
+                    <Card title="Recent Reports">
+                      <List
+                        dataSource={reports}
+                        renderItem={report => (
+                          <List.Item
+                            actions={[
+                              <Button
+                                key="download"
+                                type="link"
+                                icon={<DownloadOutlined />}
+                                onClick={() => {
+                                  if (report.format === 'xlsx') {
+                                    exportToExcel([report], report.name, 'Report');
+                                  } else if (report.format === 'docx') {
+                                    exportToWord([report], report.name, report.name);
+                                  }
+                                }}
+                              >
+                                Download
+                              </Button>
+                            ]}
                           >
-                            Feedback
-                          </Button>,
-                          <Button 
-                            type="link" 
-                            icon={<CrownOutlined />}
-                            onClick={() => {
-                              setSelectedEmployee(employee);
-                              promotionForm.setFieldsValue({
-                                employee_id: employee.empid,
-                                current_position: employee.role,
-                                department: employee.department
-                              });
-                              setIsPromotionModalVisible(true);
-                            }}
-                          >
-                            Promote
-                          </Button>
-                        ]}
-                      >
-                        <List.Item.Meta
-                          avatar={<Avatar src={employee.avatarurl} icon={<TeamOutlined />} />}
-                          title={`${employee.first_name} ${employee.last_name}`}
-                          description={
-                            <Space direction="vertical" size={0}>
-                              <Text>{employee.role}</Text>
-                              <Tag color="blue">{employee.department}</Tag>
-                              <Text type="secondary">KPI: {employee.kpiscore || 'N/A'}</Text>
-                            </Space>
-                          }
-                        />
-                      </List.Item>
-                    )}
-                  />
-                </Card>
-
-                {/* Task Management */}
-                <Card 
-                  title="Task Management"
-                  style={{ marginTop: 16 }}
-                  extra={
-                    <Button 
-                      type="primary" 
-                      icon={<PlusOutlined />}
-                      onClick={() => setIsTaskModalVisible(true)}
-                    >
-                      Assign Task
-                    </Button>
-                  }
-                >
-                  <Table
-                    dataSource={tasks}
-                    columns={taskColumns}
-                    pagination={{ pageSize: 5 }}
-                    size="small"
-                  />
-                </Card>
-              </Col>
-
-              {/* Meeting Management */}
-              <Col span={12}>
-                <Card 
-                  title="Meeting Management"
-                  extra={
-                    <Button 
-                      type="primary" 
-                      icon={<PlusOutlined />}
-                      onClick={() => setIsMeetingModalVisible(true)}
-                    >
-                      Schedule Meeting
-                    </Button>
-                  }
-                >
-                  <Table
-                    dataSource={meetings}
-                    columns={meetingColumns}
-                    pagination={{ pageSize: 5 }}
-                    size="small"
-                  />
-                </Card>
-
-                {/* Quick Actions */}
-                <Card title="Quick Actions" style={{ marginTop: 16 }}>
-                  <Space direction="vertical" style={{ width: '100%' }}>
-                    <Button 
-                      icon={<FileTextOutlined />}
-                      block
-                      onClick={() => {
-                        reportForm.setFieldsValue({ report_type: 'financial', period: 'quarter' });
-                        setIsReportModalVisible(true);
-                      }}
-                    >
-                      Generate Financial Report
-                    </Button>
-                    <Button 
-                      icon={<TeamOutlined />}
-                      block
-                      onClick={() => {
-                        reportForm.setFieldsValue({ report_type: 'performance', period: 'month' });
-                        setIsReportModalVisible(true);
-                      }}
-                    >
-                      Generate Performance Report
-                    </Button>
-                    <Button 
-                      icon={<BarChartOutlined />}
-                      block
-                      onClick={() => {
-                        reportForm.setFieldsValue({ report_type: 'kpi', period: 'month' });
-                        setIsReportModalVisible(true);
-                      }}
-                    >
-                      Generate KPI Report
-                    </Button>
-                  </Space>
-                </Card>
-              </Col>
-            </Row>
-          </TabPane>
-        </Tabs>
-      </Card>
+                            <List.Item.Meta
+                              avatar={<FileTextOutlined style={{ fontSize: '24px', color: '#1890ff' }} />}
+                              title={report.name}
+                              description={
+                                <Space direction="vertical" size={0}>
+                                  <Text>Type: {report.type}</Text>
+                                  <Text>Format: {report.format}</Text>
+                                  <Text>Created: {dayjs(report.created_at).format('DD/MM/YYYY HH:mm')}</Text>
+                                </Space>
+                              }
+                            />
+                          </List.Item>
+                        )}
+                      />
+                    </Card>
+                  </Col>
+                </Row>
+              </TabPane>
+            </Tabs>
+          </Card>
+        </Col>
+      </Row>
 
       {/* Modals */}
-      {/* Assign Task Modal */}
       <Modal
-        title="Assign New Task"
+        title="Assign Task"
         open={isTaskModalVisible}
         onCancel={() => {
           setIsTaskModalVisible(false);
           taskForm.resetFields();
         }}
-        onOk={() => taskForm.submit()}
+        footer={null}
         width={600}
       >
         <Form form={taskForm} layout="vertical" onFinish={assignTask}>
-          <Form.Item name="title" label="Task Title" rules={[{ required: true, message: 'Please enter task title' }]}>
+          <Form.Item name="title" label="Task Title" rules={[{ required: true }]}>
             <Input placeholder="Enter task title" />
           </Form.Item>
-          <Form.Item name="description" label="Description">
+          <Form.Item name="description" label="Description" rules={[{ required: true }]}>
             <TextArea rows={4} placeholder="Enter task description" />
           </Form.Item>
-          <Form.Item name="assignee_id" label="Assignee" rules={[{ required: true, message: 'Please select assignee' }]}>
-            <Select placeholder="Select employee">
-              {allEmployees.map(employee => (
-                <Option key={employee.empid} value={employee.empid}>
-                  {employee.first_name} {employee.last_name} ({employee.department})
-                </Option>
-              ))}
-            </Select>
-          </Form.Item>
-          <Form.Item name="due_date" label="Due Date" rules={[{ required: true, message: 'Please select due date' }]}>
-            <DatePicker showTime style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item name="priority" label="Priority" initialValue="medium">
-            <Select>
-              <Option value="low">Low</Option>
-              <Option value="medium">Medium</Option>
-              <Option value="high">High</Option>
-            </Select>
-          </Form.Item>
-          <Form.Item name="type" label="Task Type" initialValue="general">
-            <Select>
-              <Option value="general">General</Option>
-              <Option value="urgent">Urgent</Option>
-              <Option value="strategic">Strategic</Option>
-              <Option value="operational">Operational</Option>
-            </Select>
-          </Form.Item>
-        </Form>
-      </Modal>
-
-      {/* Edit Task Modal */}
-      <Modal
-        title="Edit Task"
-        open={isEditTaskModalVisible}
-        onCancel={() => {
-          setIsEditTaskModalVisible(false);
-          editTaskForm.resetFields();
-          setSelectedTask(null);
-        }}
-        onOk={() => editTaskForm.submit()}
-        width={600}
-      >
-        <Form form={editTaskForm} layout="vertical" onFinish={updateTask}>
-          <Form.Item name="title" label="Task Title" rules={[{ required: true }]}>
-            <Input />
-          </Form.Item>
-          <Form.Item name="description" label="Description">
-            <TextArea rows={4} />
-          </Form.Item>
-          <Form.Item name="priority" label="Priority" rules={[{ required: true }]}>
-            <Select>
-              <Option value="low">Low</Option>
-              <Option value="medium">Medium</Option>
-              <Option value="high">High</Option>
-            </Select>
-          </Form.Item>
-          <Form.Item name="type" label="Task Type" rules={[{ required: true }]}>
-            <Select>
-              <Option value="general">General</Option>
-              <Option value="urgent">Urgent</Option>
-              <Option value="strategic">Strategic</Option>
-              <Option value="operational">Operational</Option>
-            </Select>
-          </Form.Item>
-          <Form.Item name="due_date" label="Due Date" rules={[{ required: true }]}>
-            <DatePicker showTime style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item name="status" label="Status" rules={[{ required: true }]}>
-            <Select>
-              <Option value="pending">Pending</Option>
-              <Option value="in_progress">In Progress</Option>
-              <Option value="completed">Completed</Option>
-              <Option value="cancelled">Cancelled</Option>
-            </Select>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item name="assignee_id" label="Assignee" rules={[{ required: true }]}>
+                <Select placeholder="Select employee">
+                  {allEmployees.map(emp => (
+                    <Option key={emp.empid} value={emp.empid}>
+                      {emp.first_name} {emp.last_name} - {emp.role}
+                    </Option>
+                  ))}
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="priority" label="Priority" rules={[{ required: true }]}>
+                <Select placeholder="Select priority">
+                  <Option value="low">Low</Option>
+                  <Option value="medium">Medium</Option>
+                  <Option value="high">High</Option>
+                </Select>
+              </Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item name="due_date" label="Due Date" rules={[{ required: true }]}>
+                <DatePicker
+                  style={{ width: '100%' }}
+                  showTime
+                  format="YYYY-MM-DD HH:mm"
+                />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="type" label="Task Type">
+                <Select placeholder="Select task type">
+                  <Option value="general">General</Option>
+                  <Option value="urgent">Urgent</Option>
+                  <Option value="strategic">Strategic</Option>
+                </Select>
+              </Form.Item>
+            </Col>
+          </Row>
+          <Form.Item>
+            <Button type="primary" htmlType="submit" block>
+              Assign Task
+            </Button>
           </Form.Item>
         </Form>
       </Modal>
 
       {/* Feedback Modal */}
       <Modal
-        title={`Give Feedback to ${selectedEmployee?.first_name} ${selectedEmployee?.last_name}`}
+        title="Give Employee Feedback"
         open={isFeedbackModalVisible}
         onCancel={() => {
           setIsFeedbackModalVisible(false);
           feedbackForm.resetFields();
           setSelectedEmployee(null);
         }}
-        onOk={() => feedbackForm.submit()}
-        width={600}
+        footer={null}
+        width={500}
       >
-        <Form form={feedbackForm} layout="vertical" onFinish={giveFeedback}>
-          <Form.Item name="feedback_type" label="Feedback Type" rules={[{ required: true }]}>
-            <Select>
-              <Option value="positive">Positive</Option>
-              <Option value="constructive">Constructive</Option>
-              <Option value="developmental">Developmental</Option>
-            </Select>
-          </Form.Item>
-          <Form.Item name="rating" label="Rating (1-5)" rules={[{ required: true }]}>
-            <Select>
-              <Option value={1}>1 - Poor</Option>
-              <Option value={2}>2 - Fair</Option>
-              <Option value={3}>3 - Good</Option>
-              <Option value={4}>4 - Very Good</Option>
-              <Option value={5}>5 - Excellent</Option>
-            </Select>
-          </Form.Item>
-          <Form.Item name="feedback" label="Feedback" rules={[{ required: true }]}>
-            <TextArea rows={4} placeholder="Provide detailed feedback..." />
-          </Form.Item>
-        </Form>
+        {selectedEmployee && (
+          <Form form={feedbackForm} layout="vertical" onFinish={giveFeedback}>
+            <Form.Item label="Employee">
+              <Input
+                value={`${selectedEmployee.first_name} ${selectedEmployee.last_name}`}
+                disabled
+              />
+            </Form.Item>
+            <Form.Item name="feedback_type" label="Feedback Type" rules={[{ required: true }]}>
+              <Select placeholder="Select feedback type">
+                <Option value="positive">Positive</Option>
+                <Option value="constructive">Constructive</Option>
+                <Option value="developmental">Developmental</Option>
+              </Select>
+            </Form.Item>
+            <Form.Item name="rating" label="Rating (1-5)" rules={[{ required: true }]}>
+              <InputNumber min={1} max={5} style={{ width: '100%' }} />
+            </Form.Item>
+            <Form.Item name="feedback" label="Feedback" rules={[{ required: true }]}>
+              <TextArea rows={4} placeholder="Enter your feedback..." />
+            </Form.Item>
+            <Form.Item>
+              <Button type="primary" htmlType="submit" block>
+                Submit Feedback
+              </Button>
+            </Form.Item>
+          </Form>
+        )}
       </Modal>
 
       {/* Report Generation Modal */}
       <Modal
-        title="Generate Executive Report"
+        title="Generate Report"
         open={isReportModalVisible}
         onCancel={() => {
           setIsReportModalVisible(false);
           reportForm.resetFields();
         }}
-        onOk={() => reportForm.submit()}
+        footer={null}
         width={600}
-        confirmLoading={loading}
       >
         <Form form={reportForm} layout="vertical" onFinish={generateReport}>
           <Form.Item name="report_type" label="Report Type" rules={[{ required: true }]}>
-            <Select>
-              <Option value="financial">Financial Report</Option>
-              <Option value="performance">Performance Report</Option>
+            <Select placeholder="Select report type">
               <Option value="salary">Salary Report</Option>
               <Option value="attendance">Attendance Report</Option>
               <Option value="leave">Leave Report</Option>
               <Option value="kpi">KPI Report</Option>
+              <Option value="financial">Financial Report</Option>
+              <Option value="performance">Performance Report</Option>
               <Option value="staff">Staff Report</Option>
             </Select>
           </Form.Item>
-          <Form.Item name="period" label="Period" rules={[{ required: true }]}>
-            <Select>
-              <Option value="day">Daily</Option>
-              <Option value="week">Weekly</Option>
-              <Option value="month">Monthly</Option>
-              <Option value="quarter">Quarterly</Option>
-              <Option value="year">Annual</Option>
+          <Form.Item name="date_range" label="Date Range">
+            <RangePicker
+              style={{ width: '100%' }}
+              defaultValue={[dayjs().subtract(7, 'days'), dayjs()]}
+            />
+          </Form.Item>
+          <Form.Item name="format" label="Export Format" rules={[{ required: true }]}>
+            <Select placeholder="Select export format">
+              <Option value="xlsx">Excel (.xlsx)</Option>
+              <Option value="docx">Word (.docx)</Option>
             </Select>
           </Form.Item>
           <Form.Item name="employee_id" label="Employee (Optional)">
-            <Select allowClear placeholder="Select specific employee or leave blank for all">
-              {allEmployees.map(employee => (
-                <Option key={employee.empid} value={employee.empid}>
-                  {employee.first_name} {employee.last_name} ({employee.department})
+            <Select placeholder="Select specific employee" allowClear>
+              {allEmployees.map(emp => (
+                <Option key={emp.empid} value={emp.empid}>
+                  {emp.first_name} {emp.last_name} - {emp.role}
                 </Option>
               ))}
             </Select>
           </Form.Item>
-          <Form.Item name="format" label="Format" initialValue="pdf">
-            <Select>
-              <Option value="pdf">PDF</Option>
-              <Option value="excel">Excel</Option>
-              <Option value="csv">CSV</Option>
-            </Select>
+          <Form.Item>
+            <Button type="primary" htmlType="submit" block loading={loading}>
+              Generate & Export Report
+            </Button>
           </Form.Item>
         </Form>
       </Modal>
 
-      {/* Schedule Meeting Modal */}
+      {/* Meeting Modal */}
       <Modal
-        title="Schedule New Meeting"
+        title="Schedule Meeting"
         open={isMeetingModalVisible}
         onCancel={() => {
           setIsMeetingModalVisible(false);
           meetingForm.resetFields();
         }}
-        onOk={() => meetingForm.submit()}
+        footer={null}
         width={600}
       >
         <Form form={meetingForm} layout="vertical" onFinish={scheduleMeeting}>
           <Form.Item name="topic" label="Meeting Topic" rules={[{ required: true }]}>
             <Input placeholder="Enter meeting topic" />
           </Form.Item>
-          <Form.Item name="description" label="Description">
-            <TextArea rows={4} placeholder="Enter meeting description" />
+          <Form.Item name="description" label="Description" rules={[{ required: true }]}>
+            <TextArea rows={3} placeholder="Enter meeting description" />
           </Form.Item>
-          <Form.Item name="date" label="Date & Time" rules={[{ required: true }]}>
-            <DatePicker showTime style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item name="location" label="Location" rules={[{ required: true }]}>
-            <Input placeholder="Enter meeting location" />
-          </Form.Item>
-          <Form.Item name="type" label="Meeting Type" initialValue="executive">
-            <Select>
-              <Option value="executive">Executive</Option>
-              <Option value="department">Department</Option>
-              <Option value="team">Team</Option>
-              <Option value="client">Client</Option>
-              <Option value="strategic">Strategic</Option>
-            </Select>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item name="date" label="Date & Start Time" rules={[{ required: true }]}>
+                <DatePicker
+                  style={{ width: '100%' }}
+                  showTime
+                  format="YYYY-MM-DD HH:mm"
+                />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="end_time" label="End Time">
+                <DatePicker.TimePicker style={{ width: '100%' }} format="HH:mm" />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item name="location" label="Location" rules={[{ required: true }]}>
+                <Input placeholder="Meeting location" />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="type" label="Meeting Type" rules={[{ required: true }]}>
+                <Select placeholder="Select meeting type">
+                  <Option value="strategy">Strategy</Option>
+                  <Option value="review">Review</Option>
+                  <Option value="planning">Planning</Option>
+                  <Option value="general">General</Option>
+                </Select>
+              </Form.Item>
+            </Col>
+          </Row>
+          <Form.Item>
+            <Button type="primary" htmlType="submit" block>
+              Schedule Meeting
+            </Button>
           </Form.Item>
         </Form>
       </Modal>
@@ -2149,92 +2007,136 @@ const CEODashboard = () => {
           editMeetingForm.resetFields();
           setSelectedMeeting(null);
         }}
-        onOk={() => editMeetingForm.submit()}
+        footer={null}
         width={600}
       >
-        <Form form={editMeetingForm} layout="vertical" onFinish={updateMeeting}>
-          <Form.Item name="topic" label="Meeting Topic" rules={[{ required: true }]}>
-            <Input />
-          </Form.Item>
-          <Form.Item name="description" label="Description">
-            <TextArea rows={4} />
-          </Form.Item>
-          <Form.Item name="date" label="Date & Time" rules={[{ required: true }]}>
-            <DatePicker showTime style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item name="location" label="Location" rules={[{ required: true }]}>
-            <Input />
-          </Form.Item>
-          <Form.Item name="type" label="Meeting Type" rules={[{ required: true }]}>
-            <Select>
-              <Option value="executive">Executive</Option>
-              <Option value="department">Department</Option>
-              <Option value="team">Team</Option>
-              <Option value="client">Client</Option>
-              <Option value="strategic">Strategic</Option>
-            </Select>
-          </Form.Item>
-          <Form.Item name="status" label="Status" rules={[{ required: true }]}>
-            <Select>
-              <Option value="scheduled">Scheduled</Option>
-              <Option value="ongoing">Ongoing</Option>
-              <Option value="completed">Completed</Option>
-              <Option value="cancelled">Cancelled</Option>
-            </Select>
-          </Form.Item>
-        </Form>
+        {selectedMeeting && (
+          <Form form={editMeetingForm} layout="vertical" onFinish={updateMeeting}>
+            <Form.Item name="topic" label="Meeting Topic" rules={[{ required: true }]}>
+              <Input placeholder="Enter meeting topic" />
+            </Form.Item>
+            <Form.Item name="description" label="Description" rules={[{ required: true }]}>
+              <TextArea rows={3} placeholder="Enter meeting description" />
+            </Form.Item>
+            <Row gutter={16}>
+              <Col span={12}>
+                <Form.Item name="date" label="Date & Start Time" rules={[{ required: true }]}>
+                  <DatePicker
+                    style={{ width: '100%' }}
+                    showTime
+                    format="YYYY-MM-DD HH:mm"
+                  />
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item name="end_time" label="End Time">
+                  <DatePicker.TimePicker style={{ width: '100%' }} format="HH:mm" />
+                </Form.Item>
+              </Col>
+            </Row>
+            <Row gutter={16}>
+              <Col span={12}>
+                <Form.Item name="location" label="Location" rules={[{ required: true }]}>
+                  <Input placeholder="Meeting location" />
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item name="type" label="Meeting Type" rules={[{ required: true }]}>
+                  <Select placeholder="Select meeting type">
+                    <Option value="strategy">Strategy</Option>
+                    <Option value="review">Review</Option>
+                    <Option value="planning">Planning</Option>
+                    <Option value="general">General</Option>
+                  </Select>
+                </Form.Item>
+              </Col>
+            </Row>
+            <Form.Item name="status" label="Status" rules={[{ required: true }]}>
+              <Select placeholder="Select status">
+                <Option value="scheduled">Scheduled</Option>
+                <Option value="completed">Completed</Option>
+                <Option value="cancelled">Cancelled</Option>
+              </Select>
+            </Form.Item>
+            <Form.Item>
+              <Button type="primary" htmlType="submit" block>
+                Update Meeting
+              </Button>
+            </Form.Item>
+          </Form>
+        )}
       </Modal>
 
-      {/* Promotion Modal */}
+      {/* Edit Task Modal */}
       <Modal
-        title={`Promote ${selectedEmployee?.first_name} ${selectedEmployee?.last_name}`}
-        open={isPromotionModalVisible}
+        title="Edit Task"
+        open={isEditTaskModalVisible}
         onCancel={() => {
-          setIsPromotionModalVisible(false);
-          promotionForm.resetFields();
-          setSelectedEmployee(null);
+          setIsEditTaskModalVisible(false);
+          editTaskForm.resetFields();
+          setSelectedTask(null);
         }}
-        onOk={() => promotionForm.submit()}
+        footer={null}
         width={600}
       >
-        <Form 
-          form={promotionForm} 
-          layout="vertical" 
-          onFinish={promoteEmployee}
-        >
-          <Form.Item name="employee_id" label="Employee" rules={[{ required: true }]}>
-            <Select placeholder="Select employee to promote">
-              {allEmployees.map(employee => (
-                <Option key={employee.empid} value={employee.empid}>
-                  {employee.first_name} {employee.last_name} - {employee.role} ({employee.department})
-                </Option>
-              ))}
-            </Select>
-          </Form.Item>
-          <Form.Item name="current_position" label="Current Position">
-            <Input disabled />
-          </Form.Item>
-          <Form.Item name="new_position" label="New Position" rules={[{ required: true }]}>
-            <Input placeholder="Enter new position" />
-          </Form.Item>
-          <Form.Item name="department" label="Department" rules={[{ required: true }]}>
-            <Input placeholder="Enter department" />
-          </Form.Item>
-          <Form.Item name="salary_increase" label="Salary Increase (%)" rules={[{ required: true }]}>
-            <InputNumber 
-              min={0} 
-              max={100} 
-              style={{ width: '100%' }} 
-              placeholder="Enter percentage increase" 
-            />
-          </Form.Item>
-          <Form.Item name="promotion_reason" label="Promotion Reason">
-            <TextArea rows={4} placeholder="Justification for promotion" />
-          </Form.Item>
-        </Form>
+        {selectedTask && (
+          <Form form={editTaskForm} layout="vertical" onFinish={updateTask}>
+            <Form.Item name="title" label="Task Title" rules={[{ required: true }]}>
+              <Input placeholder="Enter task title" />
+            </Form.Item>
+            <Form.Item name="description" label="Description" rules={[{ required: true }]}>
+              <TextArea rows={4} placeholder="Enter task description" />
+            </Form.Item>
+            <Row gutter={16}>
+              <Col span={12}>
+                <Form.Item name="priority" label="Priority" rules={[{ required: true }]}>
+                  <Select placeholder="Select priority">
+                    <Option value="low">Low</Option>
+                    <Option value="medium">Medium</Option>
+                    <Option value="high">High</Option>
+                  </Select>
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item name="type" label="Task Type">
+                  <Select placeholder="Select task type">
+                    <Option value="general">General</Option>
+                    <Option value="urgent">Urgent</Option>
+                    <Option value="strategic">Strategic</Option>
+                  </Select>
+                </Form.Item>
+              </Col>
+            </Row>
+            <Row gutter={16}>
+              <Col span={12}>
+                <Form.Item name="due_date" label="Due Date" rules={[{ required: true }]}>
+                  <DatePicker
+                    style={{ width: '100%' }}
+                    showTime
+                    format="YYYY-MM-DD HH:mm"
+                  />
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item name="status" label="Status" rules={[{ required: true }]}>
+                  <Select placeholder="Select status">
+                    <Option value="pending">Pending</Option>
+                    <Option value="in_progress">In Progress</Option>
+                    <Option value="completed">Completed</Option>
+                  </Select>
+                </Form.Item>
+              </Col>
+            </Row>
+            <Form.Item>
+              <Button type="primary" htmlType="submit" block>
+                Update Task
+              </Button>
+            </Form.Item>
+          </Form>
+        )}
       </Modal>
 
-      {/* Add Strategic Goal Modal */}
+      {/* Add Goal Modal */}
       <Modal
         title="Add Strategic Goal"
         open={isAddGoalModalVisible}
@@ -2242,7 +2144,7 @@ const CEODashboard = () => {
           setIsAddGoalModalVisible(false);
           goalForm.resetFields();
         }}
-        onOk={() => goalForm.submit()}
+        footer={null}
         width={600}
       >
         <Form form={goalForm} layout="vertical" onFinish={addStrategicGoal}>
@@ -2250,37 +2152,59 @@ const CEODashboard = () => {
             <Input placeholder="Enter goal name" />
           </Form.Item>
           <Form.Item name="description" label="Description" rules={[{ required: true }]}>
-            <TextArea rows={4} placeholder="Enter goal description" />
+            <TextArea rows={3} placeholder="Enter goal description" />
           </Form.Item>
-          <Form.Item name="year" label="Year" rules={[{ required: true }]}>
-            <InputNumber 
-              min={2020} 
-              max={2030} 
-              style={{ width: '100%' }} 
-              placeholder="Enter year" 
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item name="year" label="Year" rules={[{ required: true }]}>
+                <InputNumber
+                  style={{ width: '100%' }}
+                  min={2023}
+                  max={2030}
+                  defaultValue={dayjs().year()}
+                />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="quarter" label="Quarter" rules={[{ required: true }]}>
+                <Select placeholder="Select quarter">
+                  <Option value={1}>Q1</Option>
+                  <Option value={2}>Q2</Option>
+                  <Option value={3}>Q3</Option>
+                  <Option value={4}>Q4</Option>
+                </Select>
+              </Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item name="target_value" label="Target Value" rules={[{ required: true }]}>
+                <InputNumber style={{ width: '100%' }} min={1} />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="current_value" label="Current Value">
+                <InputNumber style={{ width: '100%' }} min={0} defaultValue={0} />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Form.Item name="weight" label="Weight" rules={[{ required: true }]}>
+            <InputNumber
+              style={{ width: '100%' }}
+              min={1}
+              max={10}
+              defaultValue={1}
             />
           </Form.Item>
-          <Form.Item name="quarter" label="Quarter" rules={[{ required: true }]}>
-            <Select>
-              <Option value={1}>Q1</Option>
-              <Option value={2}>Q2</Option>
-              <Option value={3}>Q3</Option>
-              <Option value={4}>Q4</Option>
-            </Select>
-          </Form.Item>
-          <Form.Item name="target_value" label="Target Value" rules={[{ required: true }]}>
-            <InputNumber style={{ width: '100%' }} placeholder="Enter target value" />
-          </Form.Item>
-          <Form.Item name="current_value" label="Current Value" initialValue={0}>
-            <InputNumber style={{ width: '100%' }} placeholder="Enter current value" />
-          </Form.Item>
-          <Form.Item name="weight" label="Weight" initialValue={1}>
-            <InputNumber min={1} max={10} style={{ width: '100%' }} />
+          <Form.Item>
+            <Button type="primary" htmlType="submit" block>
+              Add Goal
+            </Button>
           </Form.Item>
         </Form>
       </Modal>
 
-      {/* Edit Strategic Goal Modal */}
+      {/* Edit Goal Modal */}
       <Modal
         title="Edit Strategic Goal"
         open={isEditGoalModalVisible}
@@ -2289,40 +2213,137 @@ const CEODashboard = () => {
           goalForm.resetFields();
           setSelectedGoal(null);
         }}
-        onOk={() => goalForm.submit()}
+        footer={null}
         width={600}
       >
-        <Form form={goalForm} layout="vertical" onFinish={updateStrategicGoal}>
-          <Form.Item name="goal_name" label="Goal Name" rules={[{ required: true }]}>
-            <Input />
-          </Form.Item>
-          <Form.Item name="description" label="Description" rules={[{ required: true }]}>
-            <TextArea rows={4} />
-          </Form.Item>
-          <Form.Item name="year" label="Year" rules={[{ required: true }]}>
-            <InputNumber min={2020} max={2030} style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item name="quarter" label="Quarter" rules={[{ required: true }]}>
-            <Select>
-              <Option value={1}>Q1</Option>
-              <Option value={2}>Q2</Option>
-              <Option value={3}>Q3</Option>
-              <Option value={4}>Q4</Option>
-            </Select>
-          </Form.Item>
-          <Form.Item name="target_value" label="Target Value" rules={[{ required: true }]}>
-            <InputNumber style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item name="current_value" label="Current Value" rules={[{ required: true }]}>
-            <InputNumber style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item name="weight" label="Weight" rules={[{ required: true }]}>
-            <InputNumber min={1} max={10} style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item name="achieved" label="Achieved" valuePropName="checked">
-            <Switch />
-          </Form.Item>
-        </Form>
+        {selectedGoal && (
+          <Form form={goalForm} layout="vertical" onFinish={updateStrategicGoal}>
+            <Form.Item name="goal_name" label="Goal Name" rules={[{ required: true }]}>
+              <Input placeholder="Enter goal name" />
+            </Form.Item>
+            <Form.Item name="description" label="Description" rules={[{ required: true }]}>
+              <TextArea rows={3} placeholder="Enter goal description" />
+            </Form.Item>
+            <Row gutter={16}>
+              <Col span={12}>
+                <Form.Item name="year" label="Year" rules={[{ required: true }]}>
+                  <InputNumber
+                    style={{ width: '100%' }}
+                    min={2023}
+                    max={2030}
+                  />
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item name="quarter" label="Quarter" rules={[{ required: true }]}>
+                  <Select placeholder="Select quarter">
+                    <Option value={1}>Q1</Option>
+                    <Option value={2}>Q2</Option>
+                    <Option value={3}>Q3</Option>
+                    <Option value={4}>Q4</Option>
+                  </Select>
+                </Form.Item>
+              </Col>
+            </Row>
+            <Row gutter={16}>
+              <Col span={12}>
+                <Form.Item name="target_value" label="Target Value" rules={[{ required: true }]}>
+                  <InputNumber style={{ width: '100%' }} min={1} />
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item name="current_value" label="Current Value">
+                  <InputNumber style={{ width: '100%' }} min={0} />
+                </Form.Item>
+              </Col>
+            </Row>
+            <Form.Item name="weight" label="Weight" rules={[{ required: true }]}>
+              <InputNumber
+                style={{ width: '100%' }}
+                min={1}
+                max={10}
+              />
+            </Form.Item>
+            <Form.Item name="achieved" label="Achieved" valuePropName="checked">
+              <Switch />
+            </Form.Item>
+            <Form.Item>
+              <Button type="primary" htmlType="submit" block>
+                Update Goal
+              </Button>
+            </Form.Item>
+          </Form>
+        )}
+      </Modal>
+
+      {/* Promotion Modal */}
+      <Modal
+        title="Promote Employee"
+        open={isPromotionModalVisible}
+        onCancel={() => {
+          setIsPromotionModalVisible(false);
+          promotionForm.resetFields();
+          setSelectedEmployee(null);
+        }}
+        footer={null}
+        width={600}
+      >
+        {selectedEmployee && (
+          <Form form={promotionForm} layout="vertical" onFinish={promoteEmployee}>
+            <Form.Item name="employee_id" initialValue={selectedEmployee.empid}>
+              <Input type="hidden" />
+            </Form.Item>
+            <Form.Item label="Current Employee">
+              <Input
+                value={`${selectedEmployee.first_name} ${selectedEmployee.last_name}`}
+                disabled
+              />
+            </Form.Item>
+            <Form.Item label="Current Position">
+              <Input value={selectedEmployee.role} disabled />
+            </Form.Item>
+            <Row gutter={16}>
+              <Col span={12}>
+                <Form.Item name="current_position" label="Current Position" initialValue={selectedEmployee.role}>
+                  <Input disabled />
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item name="new_position" label="New Position" rules={[{ required: true }]}>
+                  <Input placeholder="Enter new position" />
+                </Form.Item>
+              </Col>
+            </Row>
+            <Row gutter={16}>
+              <Col span={12}>
+                <Form.Item name="department" label="Department" rules={[{ required: true }]}>
+                  <Select placeholder="Select department">
+                    <Option value="AUTOMOTIVE">Automotive</Option>
+                    <Option value="SALES">Sales</Option>
+                    <Option value="MARKETING">Marketing</Option>
+                    <Option value="DEVELOPMENT">Development</Option>
+                    <Option value="HR">HR</Option>
+                    <Option value="FINANCE">Finance</Option>
+                  </Select>
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item name="salary_increase" label="Salary Increase ($)" rules={[{ required: true }]}>
+                  <InputNumber
+                    style={{ width: '100%' }}
+                    min={0}
+                    placeholder="Enter amount"
+                  />
+                </Form.Item>
+              </Col>
+            </Row>
+            <Form.Item>
+              <Button type="primary" htmlType="submit" block>
+                Promote Employee
+              </Button>
+            </Form.Item>
+          </Form>
+        )}
       </Modal>
     </div>
   );

@@ -267,7 +267,7 @@ class DatabaseService {
   static async getEmployees({ managerId }) {
     const { data, error } = await supabase
       .from('employee')
-      .select('empid, first_name, last_name, role, department, avatarurl, email')
+      .select('empid, first_name, last_name, role, department, email')
       .eq('managerid', managerId)
       .eq('is_active', true);
     

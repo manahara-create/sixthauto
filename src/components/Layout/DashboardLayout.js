@@ -1,8 +1,7 @@
-// src/components/Layout/DashboardLayout.js
 import React, { useState, useEffect } from 'react';
 import {
   Layout, Menu, Button, Avatar, Dropdown, Space,
-  Typography, Card, Image
+  Typography, Card, Image, message, Spin
 } from 'antd';
 import {
   MenuUnfoldOutlined,
@@ -13,20 +12,119 @@ import {
 } from '@ant-design/icons';
 import { supabase } from '../../services/supabase';
 import { useNavigate, Outlet, useLocation } from 'react-router-dom';
-import { useAuth } from '../../contexts/AuthContext';
 
 const { Header, Sider, Content } = Layout;
 const { Title, Text } = Typography;
 
 const DashboardLayout = ({ children }) => {
   const [collapsed, setCollapsed] = useState(false);
-  const { profile, logout } = useAuth();
+  const [userData, setUserData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [authUser, setAuthUser] = useState(null);
   const navigate = useNavigate();
   const location = useLocation();
 
+  // Check authentication and fetch user data
+  useEffect(() => {
+    const initializeAuth = async () => {
+      try {
+        setLoading(true);
+        
+        // Get current Supabase session
+        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+        
+        if (sessionError) {
+          throw sessionError;
+        }
+
+        if (!session) {
+          // No session found, redirect to login
+          message.warning('Please login to continue');
+          navigate('/login');
+          return;
+        }
+
+        setAuthUser(session.user);
+
+        // Fetch user data from auth_users table using supabase_auth_id
+        const { data: userData, error: userError } = await supabase
+          .from('auth_users')
+          .select('*')
+          .eq('supabase_auth_id', session.user.id)
+          .single();
+
+        if (userError) {
+          console.error('Error fetching user data:', userError);
+          // If user not found in auth_users, create a basic user object
+          setUserData({
+            full_name: session.user.email?.split('@')[0] || 'User',
+            role: 'employee',
+            email: session.user.email
+          });
+        } else {
+          setUserData(userData);
+        }
+
+      } catch (error) {
+        console.error('Auth initialization error:', error);
+        message.error('Authentication failed');
+        navigate('/login');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    initializeAuth();
+
+    // Listen for auth state changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (event, session) => {
+        if (event === 'SIGNED_OUT') {
+          setUserData(null);
+          setAuthUser(null);
+          navigate('/login');
+        } else if (event === 'SIGNED_IN' && session) {
+          setAuthUser(session.user);
+          // Fetch user data for signed in user
+          const { data: userData } = await supabase
+            .from('auth_users')
+            .select('*')
+            .eq('supabase_auth_id', session.user.id)
+            .single();
+          
+          if (userData) {
+            setUserData(userData);
+          }
+        }
+      }
+    );
+
+    return () => subscription.unsubscribe();
+  }, [navigate]);
+
   const handleLogout = async () => {
-    await logout();
-    navigate('/login');
+    try {
+      setLoading(true);
+      
+      // Sign out from Supabase Auth
+      const { error } = await supabase.auth.signOut();
+      
+      if (error) {
+        throw error;
+      }
+      
+      // Clear local state
+      setUserData(null);
+      setAuthUser(null);
+      
+      message.success('Logged out successfully');
+      navigate('/login');
+    } catch (error) {
+      console.error('Logout error:', error);
+      message.error('Failed to logout: ' + error.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const userMenuItems = [
@@ -35,15 +133,11 @@ const DashboardLayout = ({ children }) => {
       icon: <LogoutOutlined style={{ color: '#e74c3c' }} />,
       label: 'Logout',
       onClick: handleLogout,
+      disabled: loading,
     },
   ];
 
   const menuItems = [
-    {
-      key: '/dashboard',
-      icon: <DashboardOutlined style={{ color: '#3498db' }} />,
-      label: 'Dashboard',
-    }
   ];
 
   const getDashboardTitle = () => {
@@ -55,6 +149,51 @@ const DashboardLayout = ({ children }) => {
     if (location.pathname.includes('/employee')) return 'Employee Dashboard';
     return 'Dashboard';
   };
+
+  // Extract first and last name from full_name
+  const getUserName = () => {
+    if (!userData?.full_name) {
+      const emailName = authUser?.email?.split('@')[0] || 'User';
+      return { firstName: emailName, lastName: '', fullName: emailName };
+    }
+    
+    const names = userData.full_name.split(' ');
+    return {
+      firstName: names[0] || '',
+      lastName: names.slice(1).join(' ') || '',
+      fullName: userData.full_name
+    };
+  };
+
+  const userName = getUserName();
+
+  // Show loading spinner while initializing
+  if (loading && !userData) {
+    return (
+      <Layout style={{ 
+        minHeight: '100vh', 
+        display: 'flex', 
+        justifyContent: 'center', 
+        alignItems: 'center',
+        background: '#ACAC9B'
+      }}>
+        <Card style={{ 
+          textAlign: 'center', 
+          padding: '40px',
+          borderRadius: '12px',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.1)'
+        }}>
+          <Spin size="large" />
+          <Text style={{ display: 'block', marginTop: 16 }}>Loading Dashboard...</Text>
+        </Card>
+      </Layout>
+    );
+  }
+
+  // Redirect to login if no user data (handled in useEffect)
+  if (!userData && !loading) {
+    return null;
+  }
 
   return (
     <Layout style={{
@@ -156,7 +295,7 @@ const DashboardLayout = ({ children }) => {
             color: 'rgba(255,255,255,0.8)',
             fontWeight: '600'
           }}>
-            EMS For
+            EMS
           </Text>
           <Text style={{
             color: 'white',
@@ -197,9 +336,9 @@ const DashboardLayout = ({ children }) => {
           {/* User Info */}
           <Space>
             <Text strong style={{ color: '#2c3e50' }}>
-              {profile?.first_name} {profile?.last_name} 
+              {userName.fullName}
               <Text type="secondary" style={{ marginLeft: 8 }}>
-                ({profile?.role})
+                ({userData?.role || 'employee'})
               </Text>
             </Text>
             
@@ -212,6 +351,7 @@ const DashboardLayout = ({ children }) => {
                 }
               }}
               placement="bottomRight"
+              trigger={['click']}
             >
               <Avatar
                 icon={<UserOutlined />}
@@ -262,7 +402,7 @@ const DashboardLayout = ({ children }) => {
                 color: '#7f8c8d',
                 fontSize: '16px'
               }}>
-                Welcome back, {profile?.first_name} {profile?.last_name}
+                Welcome back, {userName.firstName} {userName.lastName}
               </Text>
             </div>
 

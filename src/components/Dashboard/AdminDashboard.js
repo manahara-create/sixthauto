@@ -20,14 +20,15 @@ import {
   UploadOutlined, InboxOutlined, StarOutlined,
   ClockCircleOutlined, EnvironmentOutlined, IdcardOutlined,
   SolutionOutlined, TrophyOutlined, RiseOutlined,
-  FallOutlined, PercentageOutlined, MoneyCollectOutlined
+  FallOutlined, PercentageOutlined, MoneyCollectOutlined,
+  FilterOutlined, DownloadOutlined, FileExcelOutlined, FileWordOutlined
 } from '@ant-design/icons';
 
-import DB from '../../services/databaseService';
-import { DatabaseService as GenericDB } from '../../services/dashboardService';
-import { useAuth } from '../../contexts/AuthContext';
-import ReportService from '../../services/reportServices';
+import { supabase } from '../../services/supabase';
 import dayjs from 'dayjs';
+import * as XLSX from 'xlsx';
+import { Document, Packer, Paragraph, Table as DocTable, TableCell, TableRow, TextRun } from 'docx';
+import { saveAs } from 'file-saver';
 
 const { TabPane } = Tabs;
 const { Option } = Select;
@@ -35,16 +36,23 @@ const { TextArea } = Input;
 const { Panel } = Collapse;
 const { Step } = Steps;
 const { Dragger } = Upload;
+const { RangePicker } = DatePicker;
 
 const AdminDashboard = () => {
-  const { profile } = useAuth();
   const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState(null);
   const [systemStats, setSystemStats] = useState({});
   const [allEmployees, setAllEmployees] = useState([]);
   const [recentActivities, setRecentActivities] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [leaveTypes, setLeaveTypes] = useState([]);
   const [loanTypes, setLoanTypes] = useState([]);
+  
+  // Date Range State
+  const [dateRange, setDateRange] = useState([
+    dayjs().subtract(7, 'day'),
+    dayjs()
+  ]);
   
   // Modal states
   const [isAddUserModalVisible, setIsAddUserModalVisible] = useState(false);
@@ -63,6 +71,7 @@ const AdminDashboard = () => {
   const [isMeetingModalVisible, setIsMeetingModalVisible] = useState(false);
   const [isFeedbackModalVisible, setIsFeedbackModalVisible] = useState(false);
   const [isEmployeeDetailVisible, setIsEmployeeDetailVisible] = useState(false);
+  const [isDateRangeModalVisible, setIsDateRangeModalVisible] = useState(false);
   
   const [selectedEmployee, setSelectedEmployee] = useState(null);
   const [activeTab, setActiveTab] = useState('overview');
@@ -83,6 +92,7 @@ const AdminDashboard = () => {
   const [taskForm] = Form.useForm();
   const [meetingForm] = Form.useForm();
   const [feedbackForm] = Form.useForm();
+  const [dateRangeForm] = Form.useForm();
 
   // Data states
   const [leaveRequests, setLeaveRequests] = useState([]);
@@ -105,25 +115,31 @@ const AdminDashboard = () => {
   const initializeDashboard = async () => {
     try {
       setLoading(true);
-      await Promise.all([
-        fetchSystemStats(),
-        fetchAllEmployees(),
-        fetchDepartments(),
-        fetchRecentActivities(),
-        fetchLeaveRequests(),
-        fetchLoanRequests(),
-        fetchAttendanceData(),
-        fetchSalaryData(),
-        fetchKPIData(),
-        fetchTrainingRequests(),
-        fetchPromotionRequests(),
-        fetchEpfEtfData(),
-        fetchPerformanceData(),
-        fetchLeaveTypes(),
-        fetchLoanTypes(),
-        fetchTasks(),
-        fetchMeetings()
-      ]);
+      // Get current user
+      const { data: { user: currentUser } } = await supabase.auth.getUser();
+      setUser(currentUser);
+      
+      if (currentUser) {
+        await Promise.all([
+          fetchSystemStats(),
+          fetchAllEmployees(),
+          fetchDepartments(),
+          fetchRecentActivities(),
+          fetchLeaveRequests(),
+          fetchLoanRequests(),
+          fetchAttendanceData(),
+          fetchSalaryData(),
+          fetchKPIData(),
+          fetchTrainingRequests(),
+          fetchPromotionRequests(),
+          fetchEpfEtfData(),
+          fetchPerformanceData(),
+          fetchLeaveTypes(),
+          fetchLoanTypes(),
+          fetchTasks(),
+          fetchMeetings()
+        ]);
+      }
     } catch (error) {
       console.error('Error initializing admin dashboard:', error);
       message.error('Failed to load dashboard data');
@@ -132,35 +148,53 @@ const AdminDashboard = () => {
     }
   };
 
-  // Data fetching functions
+  // Data fetching functions with date range
   const fetchSystemStats = async () => {
     try {
-      const employees = await DB.getEmployees();
-      const pendingLeaves = await DB.getPendingLeaves();
-      const departments = await DB.getDepartments();
-      const loans = await GenericDB.getData('loanrequest');
-      const attendance = await GenericDB.getData('attendance');
+      const { data: employees } = await supabase
+        .from('employee')
+        .select('*')
+        .eq('is_active', true);
 
-      const activeEmployees = employees.filter(e => e.status === 'Active').length;
-      const totalDepartments = departments.length;
-      const pendingLoans = loans.filter(l => l.status === 'pending').length;
-      const todayAttendance = attendance.filter(a => a.date === dayjs().format('YYYY-MM-DD'));
+      const { data: pendingLeaves } = await supabase
+        .from('employeeleave')
+        .select('*')
+        .eq('leavestatus', 'pending');
+
+      const { data: departments } = await supabase
+        .from('departments')
+        .select('*');
+
+      const { data: loans } = await supabase
+        .from('loanrequest')
+        .select('*')
+        .eq('status', 'pending');
+
+      const today = dayjs().format('YYYY-MM-DD');
+      const { data: attendance } = await supabase
+        .from('attendance')
+        .select('*')
+        .eq('date', today);
+
+      const activeEmployees = employees?.filter(e => e.status === 'Active').length || 0;
+      const totalDepartments = departments?.length || 0;
+      const pendingLoans = loans?.length || 0;
+      const todayAttendance = attendance || [];
 
       setSystemStats({
-        totalEmployees: employees.length,
+        totalEmployees: employees?.length || 0,
         activeEmployees,
         departments: totalDepartments,
-        pendingLeaves: pendingLeaves.length,
+        pendingLeaves: pendingLeaves?.length || 0,
         pendingLoans,
         todayPresent: todayAttendance.filter(a => a.status === 'Present').length,
         systemHealth: 95,
         storageUsed: 65,
-        newHires: employees.filter(e => {
-          const joinDate = new Date(e.created_at);
-          const monthAgo = new Date();
-          monthAgo.setMonth(monthAgo.getMonth() - 1);
+        newHires: employees?.filter(e => {
+          const joinDate = dayjs(e.created_at);
+          const monthAgo = dayjs().subtract(1, 'month');
           return joinDate >= monthAgo;
-        }).length
+        }).length || 0
       });
     } catch (error) {
       console.error('Error fetching system stats:', error);
@@ -169,8 +203,13 @@ const AdminDashboard = () => {
 
   const fetchAllEmployees = async () => {
     try {
-      const employees = await DB.getEmployees();
-      setAllEmployees(employees);
+      const { data, error } = await supabase
+        .from('employee')
+        .select('*')
+        .order('full_name');
+
+      if (error) throw error;
+      setAllEmployees(data || []);
     } catch (error) {
       console.error('Error fetching employees:', error);
     }
@@ -178,8 +217,13 @@ const AdminDashboard = () => {
 
   const fetchDepartments = async () => {
     try {
-      const data = await DB.getDepartments();
-      setDepartments(data);
+      const { data, error } = await supabase
+        .from('departments')
+        .select('*')
+        .order('departmentname');
+
+      if (error) throw error;
+      setDepartments(data || []);
     } catch (error) {
       console.error('Error fetching departments:', error);
     }
@@ -187,8 +231,13 @@ const AdminDashboard = () => {
 
   const fetchLeaveTypes = async () => {
     try {
-      const data = await GenericDB.getData('leavetype');
-      setLeaveTypes(data);
+      const { data, error } = await supabase
+        .from('leavetype')
+        .select('*')
+        .order('leavetype');
+
+      if (error) throw error;
+      setLeaveTypes(data || []);
     } catch (error) {
       console.error('Error fetching leave types:', error);
     }
@@ -196,8 +245,13 @@ const AdminDashboard = () => {
 
   const fetchLoanTypes = async () => {
     try {
-      const data = await GenericDB.getData('loantype');
-      setLoanTypes(data);
+      const { data, error } = await supabase
+        .from('loantype')
+        .select('*')
+        .order('loantype');
+
+      if (error) throw error;
+      setLoanTypes(data || []);
     } catch (error) {
       console.error('Error fetching loan types:', error);
     }
@@ -205,8 +259,19 @@ const AdminDashboard = () => {
 
   const fetchRecentActivities = async () => {
     try {
-      const activities = await GenericDB.getData('audit_logs', { limit: 10, orderBy: 'created_at', order: 'desc' });
-      setRecentActivities(activities);
+      const startDate = dateRange[0].format('YYYY-MM-DD');
+      const endDate = dateRange[1].format('YYYY-MM-DD');
+
+      const { data, error } = await supabase
+        .from('audit_logs')
+        .select('*')
+        .gte('created_at', startDate)
+        .lte('created_at', endDate)
+        .order('created_at', { ascending: false })
+        .limit(10);
+
+      if (error) throw error;
+      setRecentActivities(data || []);
     } catch (error) {
       console.error('Error fetching activities:', error);
     }
@@ -214,8 +279,22 @@ const AdminDashboard = () => {
 
   const fetchLeaveRequests = async () => {
     try {
-      const leaves = await GenericDB.getData('employeeleave', { orderBy: 'created_at', order: 'desc' });
-      setLeaveRequests(leaves);
+      const startDate = dateRange[0].format('YYYY-MM-DD');
+      const endDate = dateRange[1].format('YYYY-MM-DD');
+
+      const { data, error } = await supabase
+        .from('employeeleave')
+        .select(`
+          *,
+          employee:empid (full_name, department),
+          leavetype:leavetypeid (leavetype)
+        `)
+        .gte('created_at', startDate)
+        .lte('created_at', endDate)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setLeaveRequests(data || []);
     } catch (error) {
       console.error('Error fetching leave requests:', error);
     }
@@ -223,8 +302,22 @@ const AdminDashboard = () => {
 
   const fetchLoanRequests = async () => {
     try {
-      const loans = await GenericDB.getData('loanrequest', { orderBy: 'created_at', order: 'desc' });
-      setLoanRequests(loans);
+      const startDate = dateRange[0].format('YYYY-MM-DD');
+      const endDate = dateRange[1].format('YYYY-MM-DD');
+
+      const { data, error } = await supabase
+        .from('loanrequest')
+        .select(`
+          *,
+          employee:empid (full_name, department),
+          loantype:loantypeid (loantype)
+        `)
+        .gte('created_at', startDate)
+        .lte('created_at', endDate)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setLoanRequests(data || []);
     } catch (error) {
       console.error('Error fetching loan requests:', error);
     }
@@ -232,12 +325,22 @@ const AdminDashboard = () => {
 
   const fetchAttendanceData = async () => {
     try {
-      const attendance = await GenericDB.getData('attendance', { 
-        limit: 50, 
-        orderBy: 'created_at', 
-        order: 'desc' 
-      });
-      setAttendanceData(attendance);
+      const startDate = dateRange[0].format('YYYY-MM-DD');
+      const endDate = dateRange[1].format('YYYY-MM-DD');
+
+      const { data, error } = await supabase
+        .from('attendance')
+        .select(`
+          *,
+          employee:empid (full_name, department)
+        `)
+        .gte('date', startDate)
+        .lte('date', endDate)
+        .order('date', { ascending: false })
+        .limit(50);
+
+      if (error) throw error;
+      setAttendanceData(data || []);
     } catch (error) {
       console.error('Error fetching attendance:', error);
     }
@@ -245,11 +348,21 @@ const AdminDashboard = () => {
 
   const fetchSalaryData = async () => {
     try {
-      const salaries = await GenericDB.getData('salary', { 
-        orderBy: 'created_at', 
-        order: 'desc' 
-      });
-      setSalaryData(salaries);
+      const startDate = dateRange[0].format('YYYY-MM-DD');
+      const endDate = dateRange[1].format('YYYY-MM-DD');
+
+      const { data, error } = await supabase
+        .from('salary')
+        .select(`
+          *,
+          employee:empid (full_name, department)
+        `)
+        .gte('salarydate', startDate)
+        .lte('salarydate', endDate)
+        .order('salarydate', { ascending: false });
+
+      if (error) throw error;
+      setSalaryData(data || []);
     } catch (error) {
       console.error('Error fetching salary data:', error);
     }
@@ -257,11 +370,21 @@ const AdminDashboard = () => {
 
   const fetchKPIData = async () => {
     try {
-      const kpis = await GenericDB.getData('kpi', { 
-        orderBy: 'calculatedate', 
-        order: 'desc' 
-      });
-      setKpiData(kpis);
+      const startDate = dateRange[0].format('YYYY-MM-DD');
+      const endDate = dateRange[1].format('YYYY-MM-DD');
+
+      const { data, error } = await supabase
+        .from('kpi')
+        .select(`
+          *,
+          employee:empid (full_name, department)
+        `)
+        .gte('calculatedate', startDate)
+        .lte('calculatedate', endDate)
+        .order('calculatedate', { ascending: false });
+
+      if (error) throw error;
+      setKpiData(data || []);
     } catch (error) {
       console.error('Error fetching KPI data:', error);
     }
@@ -269,11 +392,21 @@ const AdminDashboard = () => {
 
   const fetchTrainingRequests = async () => {
     try {
-      const trainings = await GenericDB.getData('training', { 
-        orderBy: 'created_at', 
-        order: 'desc' 
-      });
-      setTrainingRequests(trainings);
+      const startDate = dateRange[0].format('YYYY-MM-DD');
+      const endDate = dateRange[1].format('YYYY-MM-DD');
+
+      const { data, error } = await supabase
+        .from('training')
+        .select(`
+          *,
+          employee:empid (full_name, department)
+        `)
+        .gte('date', startDate)
+        .lte('date', endDate)
+        .order('date', { ascending: false });
+
+      if (error) throw error;
+      setTrainingRequests(data || []);
     } catch (error) {
       console.error('Error fetching training requests:', error);
     }
@@ -281,11 +414,21 @@ const AdminDashboard = () => {
 
   const fetchPromotionRequests = async () => {
     try {
-      const promotions = await GenericDB.getData('promotion', { 
-        orderBy: 'created_at', 
-        order: 'desc' 
-      });
-      setPromotionRequests(promotions);
+      const startDate = dateRange[0].format('YYYY-MM-DD');
+      const endDate = dateRange[1].format('YYYY-MM-DD');
+
+      const { data, error } = await supabase
+        .from('promotion')
+        .select(`
+          *,
+          employee:empid (full_name, department)
+        `)
+        .gte('promotiondate', startDate)
+        .lte('promotiondate', endDate)
+        .order('promotiondate', { ascending: false });
+
+      if (error) throw error;
+      setPromotionRequests(data || []);
     } catch (error) {
       console.error('Error fetching promotion requests:', error);
     }
@@ -293,11 +436,21 @@ const AdminDashboard = () => {
 
   const fetchEpfEtfData = async () => {
     try {
-      const epfEtf = await GenericDB.getData('epfnetf', { 
-        orderBy: 'created_at', 
-        order: 'desc' 
-      });
-      setEpfEtfData(epfEtf);
+      const startDate = dateRange[0].format('YYYY-MM-DD');
+      const endDate = dateRange[1].format('YYYY-MM-DD');
+
+      const { data, error } = await supabase
+        .from('epfnetf')
+        .select(`
+          *,
+          employee:empid (full_name, department)
+        `)
+        .gte('applieddate', startDate)
+        .lte('applieddate', endDate)
+        .order('applieddate', { ascending: false });
+
+      if (error) throw error;
+      setEpfEtfData(data || []);
     } catch (error) {
       console.error('Error fetching EPF/ETF data:', error);
     }
@@ -305,11 +458,21 @@ const AdminDashboard = () => {
 
   const fetchPerformanceData = async () => {
     try {
-      const performance = await GenericDB.getData('performance_rating', { 
-        orderBy: 'rating_date', 
-        order: 'desc' 
-      });
-      setPerformanceData(performance);
+      const startDate = dateRange[0].format('YYYY-MM-DD');
+      const endDate = dateRange[1].format('YYYY-MM-DD');
+
+      const { data, error } = await supabase
+        .from('performance_rating')
+        .select(`
+          *,
+          employee:empid (full_name, department)
+        `)
+        .gte('rating_date', startDate)
+        .lte('rating_date', endDate)
+        .order('rating_date', { ascending: false });
+
+      if (error) throw error;
+      setPerformanceData(data || []);
     } catch (error) {
       console.error('Error fetching performance data:', error);
     }
@@ -317,11 +480,21 @@ const AdminDashboard = () => {
 
   const fetchTasks = async () => {
     try {
-      const tasksData = await GenericDB.getData('tasks', { 
-        orderBy: 'created_at', 
-        order: 'desc' 
-      });
-      setTasks(tasksData);
+      const startDate = dateRange[0].format('YYYY-MM-DD');
+      const endDate = dateRange[1].format('YYYY-MM-DD');
+
+      const { data, error } = await supabase
+        .from('tasks')
+        .select(`
+          *,
+          employee:empid (full_name, department)
+        `)
+        .gte('created_at', startDate)
+        .lte('created_at', endDate)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setTasks(data || []);
     } catch (error) {
       console.error('Error fetching tasks:', error);
     }
@@ -329,22 +502,212 @@ const AdminDashboard = () => {
 
   const fetchMeetings = async () => {
     try {
-      const meetingsData = await GenericDB.getData('meeting', { 
-        orderBy: 'created_at', 
-        order: 'desc' 
-      });
-      setMeetings(meetingsData);
+      const startDate = dateRange[0].format('YYYY-MM-DD');
+      const endDate = dateRange[1].format('YYYY-MM-DD');
+
+      const { data, error } = await supabase
+        .from('meeting')
+        .select(`
+          *,
+          employee:empid (full_name, department)
+        `)
+        .gte('date', startDate)
+        .lte('date', endDate)
+        .order('date', { ascending: false });
+
+      if (error) throw error;
+      setMeetings(data || []);
     } catch (error) {
       console.error('Error fetching meetings:', error);
     }
   };
 
-  // Handler functions
+  // Export Functions
+  const exportToExcel = (data, fileName, sheetName = 'Sheet1') => {
+    try {
+      const worksheet = XLSX.utils.json_to_sheet(data);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
+      XLSX.writeFile(workbook, `${fileName}_${dayjs().format('YYYY-MM-DD')}.xlsx`);
+      message.success(`${fileName} exported successfully!`);
+    } catch (error) {
+      console.error('Error exporting to Excel:', error);
+      message.error('Failed to export to Excel');
+    }
+  };
+
+  const exportToWord = async (data, fileName, title) => {
+    try {
+      const tableRows = [
+        new TableRow({
+          children: Object.keys(data[0] || {}).map(key => 
+            new TableCell({
+              children: [new Paragraph({ children: [new TextRun({ text: key, bold: true })] })]
+            })
+          )
+        }),
+        ...data.map(item => 
+          new TableRow({
+            children: Object.values(item).map(value => 
+              new TableCell({
+                children: [new Paragraph({ children: [new TextRun({ text: String(value || '') })] })]
+              })
+            )
+          })
+        )
+      ];
+
+      const doc = new Document({
+        sections: [{
+          properties: {},
+          children: [
+            new Paragraph({
+              children: [new TextRun({ text: title, bold: true, size: 32 })]
+            }),
+            new Paragraph({
+              children: [new TextRun({ 
+                text: `Date Range: ${dateRange[0].format('MMM D, YYYY')} - ${dateRange[1].format('MMM D, YYYY')}`,
+                size: 24 
+              })]
+            }),
+            new Paragraph({ text: "" }),
+            new DocTable({
+              rows: tableRows,
+            })
+          ]
+        }]
+      });
+
+      const blob = await Packer.toBlob(doc);
+      saveAs(blob, `${fileName}_${dayjs().format('YYYY-MM-DD')}.docx`);
+      message.success(`${fileName} exported successfully!`);
+    } catch (error) {
+      console.error('Error exporting to Word:', error);
+      message.error('Failed to export to Word');
+    }
+  };
+
+  // Report Generation Functions
+  const generateReport = async (type) => {
+    try {
+      message.info(`Generating ${type} report...`);
+      
+      let reportData = [];
+      let fileName = '';
+      let title = '';
+
+      switch (type) {
+        case 'staff':
+          reportData = allEmployees.map(emp => ({
+            'Employee ID': emp.empid,
+            'Full Name': emp.full_name,
+            'Email': emp.email,
+            'Phone': emp.phone,
+            'Role': emp.role,
+            'Department': emp.department,
+            'Status': emp.status,
+            'Basic Salary': `LKR ${emp.basicsalary?.toLocaleString() || '0'}`,
+            'Join Date': dayjs(emp.created_at).format('MMM D, YYYY')
+          }));
+          fileName = 'Staff_Report';
+          title = 'Staff Report';
+          break;
+
+        case 'salary':
+          reportData = salaryData.map(salary => ({
+            'Employee': salary.employee?.full_name || 'N/A',
+            'Department': salary.employee?.department || 'N/A',
+            'Basic Salary': `LKR ${salary.basicsalary?.toLocaleString() || '0'}`,
+            'OT Pay': `LKR ${salary.otpay?.toLocaleString() || '0'}`,
+            'Bonus Pay': `LKR ${salary.bonuspay?.toLocaleString() || '0'}`,
+            'Increment Pay': `LKR ${salary.incrementpay?.toLocaleString() || '0'}`,
+            'Total Salary': `LKR ${salary.totalsalary?.toLocaleString() || '0'}`,
+            'Salary Date': salary.salarydate
+          }));
+          fileName = 'Salary_Report';
+          title = 'Salary Report';
+          break;
+
+        case 'attendance':
+          reportData = attendanceData.map(att => ({
+            'Employee': att.employee?.full_name || 'N/A',
+            'Department': att.employee?.department || 'N/A',
+            'Date': att.date,
+            'In Time': att.intime,
+            'Out Time': att.outtime,
+            'Status': att.status
+          }));
+          fileName = 'Attendance_Report';
+          title = 'Attendance Report';
+          break;
+
+        case 'financial':
+          reportData = [
+            ...salaryData.map(s => ({
+              'Type': 'Salary',
+              'Employee': s.employee?.full_name || 'N/A',
+              'Amount': s.totalsalary,
+              'Date': s.salarydate
+            })),
+            ...loanRequests.map(l => ({
+              'Type': 'Loan',
+              'Employee': l.employee?.full_name || 'N/A',
+              'Amount': l.amount,
+              'Status': l.status,
+              'Date': l.date
+            })),
+            ...epfEtfData.map(e => ({
+              'Type': 'EPF/ETF',
+              'Employee': e.employee?.full_name || 'N/A',
+              'EPF': e.epfcalculation,
+              'ETF': e.etfcalculation,
+              'Date': e.applieddate
+            }))
+          ];
+          fileName = 'Financial_Report';
+          title = 'Financial Report';
+          break;
+
+        case 'leave':
+          reportData = leaveRequests.map(leave => ({
+            'Employee': leave.employee?.full_name || 'N/A',
+            'Leave Type': leave.leavetype?.leavetype || 'N/A',
+            'From Date': leave.leavefromdate,
+            'To Date': leave.leavetodate,
+            'Duration': `${leave.duration} days`,
+            'Status': leave.leavestatus,
+            'Reason': leave.leavereason
+          }));
+          fileName = 'Leave_Report';
+          title = 'Leave Report';
+          break;
+
+        default:
+          message.error('Unknown report type');
+          return;
+      }
+
+      // Show export options
+      Modal.confirm({
+        title: `Export ${title}`,
+        content: `Choose export format for ${title}`,
+        okText: 'Excel (XLSX)',
+        cancelText: 'Word (DOCX)',
+        onOk: () => exportToExcel(reportData, fileName),
+        onCancel: () => exportToWord(reportData, fileName, title)
+      });
+
+    } catch (error) {
+      console.error('Error generating report:', error);
+      message.error(error.message || 'Failed to generate report');
+    }
+  };
+
+  // Handler functions (CRUD operations)
   const handleAddUser = async (values) => {
     try {
       const employeeData = {
-        first_name: values.first_name,
-        last_name: values.last_name,
+        full_name: `${values.first_name} ${values.last_name}`,
         email: values.email,
         role: values.role,
         department: values.department,
@@ -353,21 +716,32 @@ const AdminDashboard = () => {
         empaddress: values.address,
         status: 'Active',
         is_active: true,
-        sickleavebalance: 14,
-        fulldayleavebalance: 21,
-        halfdayleavebalance: 5,
-        shortleavebalance: 7,
-        maternityleavebalance: 84
+        basicsalary: values.basicsalary || 0,
+        created_at: new Date().toISOString()
       };
 
-      const result = await GenericDB.insertData('employee', employeeData);
+      const { data, error } = await supabase
+        .from('employee')
+        .insert([employeeData])
+        .select();
 
-      if (result) {
-        message.success('User created successfully!');
-        setIsAddUserModalVisible(false);
-        userForm.resetFields();
-        fetchAllEmployees();
-      }
+      if (error) throw error;
+
+      // Create auth user record
+      await supabase
+        .from('auth_users')
+        .insert([{
+          email: values.email,
+          role: values.role,
+          is_active: true,
+          full_name: employeeData.full_name
+        }]);
+
+      message.success('User created successfully!');
+      setIsAddUserModalVisible(false);
+      userForm.resetFields();
+      fetchAllEmployees();
+      fetchSystemStats();
     } catch (error) {
       console.error('Error adding user:', error);
       message.error(error.message || 'Failed to add user');
@@ -379,8 +753,7 @@ const AdminDashboard = () => {
       if (!selectedEmployee) return;
 
       const updates = {
-        first_name: values.first_name,
-        last_name: values.last_name,
+        full_name: `${values.first_name} ${values.last_name}`,
         email: values.email,
         role: values.role,
         department: values.department,
@@ -388,17 +761,33 @@ const AdminDashboard = () => {
         gender: values.gender,
         empaddress: values.address,
         status: values.status,
-        is_active: values.is_active
+        is_active: values.is_active,
+        basicsalary: values.basicsalary || 0,
+        updated_at: new Date().toISOString()
       };
 
-      const updated = await GenericDB.updateData('employee', updates, { empid: selectedEmployee.empid });
+      const { error } = await supabase
+        .from('employee')
+        .update(updates)
+        .eq('empid', selectedEmployee.empid);
 
-      if (updated) {
-        message.success('User updated successfully!');
-        setIsEditUserModalVisible(false);
-        setSelectedEmployee(null);
-        fetchAllEmployees();
-      }
+      if (error) throw error;
+
+      // Update auth user
+      await supabase
+        .from('auth_users')
+        .update({
+          email: values.email,
+          role: values.role,
+          is_active: values.is_active,
+          full_name: updates.full_name
+        })
+        .eq('email', selectedEmployee.email);
+
+      message.success('User updated successfully!');
+      setIsEditUserModalVisible(false);
+      setSelectedEmployee(null);
+      fetchAllEmployees();
     } catch (error) {
       console.error('Error updating user:', error);
       message.error(error.message || 'Failed to update user');
@@ -407,9 +796,22 @@ const AdminDashboard = () => {
 
   const handleDeleteUser = async (employee) => {
     try {
-      await GenericDB.deleteData('employee', { empid: employee.empid });
+      const { error } = await supabase
+        .from('employee')
+        .update({ is_active: false, status: 'Inactive' })
+        .eq('empid', employee.empid);
+
+      if (error) throw error;
+
+      // Deactivate auth user
+      await supabase
+        .from('auth_users')
+        .update({ is_active: false })
+        .eq('email', employee.email);
+
       message.success('User deactivated successfully!');
       fetchAllEmployees();
+      fetchSystemStats();
     } catch (error) {
       console.error('Error deleting user:', error);
       message.error(error.message || 'Failed to delete user');
@@ -425,15 +827,22 @@ const AdminDashboard = () => {
         leavetodate: values.leavetodate.format('YYYY-MM-DD'),
         leavereason: values.leavereason,
         leavestatus: 'approved',
-        approvedby: profile.empid,
-        duration: values.leavetodate.diff(values.leavefromdate, 'day') + 1
+        approvedby: user?.id,
+        duration: values.leavetodate.diff(values.leavefromdate, 'day') + 1,
+        created_at: new Date().toISOString()
       };
 
-      await GenericDB.insertData('employeeleave', leaveData);
+      const { error } = await supabase
+        .from('employeeleave')
+        .insert([leaveData]);
+
+      if (error) throw error;
+
       message.success('Leave applied successfully!');
       setIsLeaveModalVisible(false);
       leaveForm.resetFields();
       fetchLeaveRequests();
+      fetchSystemStats();
     } catch (error) {
       console.error('Error applying leave:', error);
       message.error('Failed to apply leave');
@@ -446,11 +855,17 @@ const AdminDashboard = () => {
         empid: values.empid,
         date: values.date.format('YYYY-MM-DD'),
         intime: values.intime.format('HH:mm'),
-        outtime: values.outtime.format('HH:mm'),
-        status: values.status
+        outtime: values.outtime ? values.outtime.format('HH:mm') : null,
+        status: values.status,
+        created_at: new Date().toISOString()
       };
 
-      await GenericDB.insertData('attendance', attendanceData);
+      const { error } = await supabase
+        .from('attendance')
+        .insert([attendanceData]);
+
+      if (error) throw error;
+
       message.success('Attendance marked successfully!');
       setIsAttendanceModalVisible(false);
       attendanceForm.resetFields();
@@ -473,10 +888,16 @@ const AdminDashboard = () => {
         bonuspay: values.bonuspay || 0,
         totalsalary: totalSalary,
         salarydate: values.salarydate.format('YYYY-MM-DD'),
-        processed_by: profile.empid
+        processed_by: user?.id,
+        created_at: new Date().toISOString()
       };
 
-      await GenericDB.insertData('salary', salaryData);
+      const { error } = await supabase
+        .from('salary')
+        .insert([salaryData]);
+
+      if (error) throw error;
+
       message.success('Salary processed successfully!');
       setIsSalaryModalVisible(false);
       salaryForm.resetFields();
@@ -497,15 +918,22 @@ const AdminDashboard = () => {
         interestrate: values.interestrate,
         date: values.date.format('YYYY-MM-DD'),
         status: 'approved',
-        processedby: profile.empid,
-        processedat: new Date()
+        processedby: user?.id,
+        processedat: new Date().toISOString(),
+        created_at: new Date().toISOString()
       };
 
-      await GenericDB.insertData('loanrequest', loanData);
+      const { error } = await supabase
+        .from('loanrequest')
+        .insert([loanData]);
+
+      if (error) throw error;
+
       message.success('Loan processed successfully!');
       setIsLoanModalVisible(false);
       loanForm.resetFields();
       fetchLoanRequests();
+      fetchSystemStats();
     } catch (error) {
       console.error('Error processing loan:', error);
       message.error('Failed to process loan');
@@ -518,10 +946,16 @@ const AdminDashboard = () => {
         empid: values.empid,
         kpivalue: values.kpivalue,
         calculatedate: values.calculatedate.format('YYYY-MM-DD'),
-        kpiyear: values.calculatedate.year()
+        kpiyear: values.calculatedate.year(),
+        created_at: new Date().toISOString()
       };
 
-      await GenericDB.insertData('kpi', kpiData);
+      const { error } = await supabase
+        .from('kpi')
+        .insert([kpiData]);
+
+      if (error) throw error;
+
       message.success('KPI updated successfully!');
       setIsKPIModalVisible(false);
       kpiForm.resetFields();
@@ -539,11 +973,17 @@ const AdminDashboard = () => {
         basicsalary: values.basicsalary,
         epfcalculation: values.basicsalary * 0.08,
         etfcalculation: values.basicsalary * 0.03,
-        applieddate: new Date(),
-        processedby: profile.empid
+        applieddate: new Date().toISOString(),
+        processedby: user?.id,
+        created_at: new Date().toISOString()
       };
 
-      await GenericDB.insertData('epfnetf', epfEtfData);
+      const { error } = await supabase
+        .from('epfnetf')
+        .insert([epfEtfData]);
+
+      if (error) throw error;
+
       message.success('EPF/ETF calculated successfully!');
       setIsEpfEtfModalVisible(false);
       epfEtfForm.resetFields();
@@ -562,10 +1002,17 @@ const AdminDashboard = () => {
         trainer: values.trainer,
         venue: values.venue,
         duration: values.duration,
-        date: values.date.format('YYYY-MM-DD')
+        date: values.date.format('YYYY-MM-DD'),
+        status: 'scheduled',
+        created_at: new Date().toISOString()
       };
 
-      await GenericDB.insertData('training', trainingData);
+      const { error } = await supabase
+        .from('training')
+        .insert([trainingData]);
+
+      if (error) throw error;
+
       message.success('Training scheduled successfully!');
       setIsTrainingModalVisible(false);
       trainingForm.resetFields();
@@ -584,10 +1031,16 @@ const AdminDashboard = () => {
         newposition: values.newposition,
         promotiondate: values.promotiondate.format('YYYY-MM-DD'),
         salaryincrease: values.salaryincrease,
-        department: values.department
+        department: values.department,
+        created_at: new Date().toISOString()
       };
 
-      await GenericDB.insertData('promotion', promotionData);
+      const { error } = await supabase
+        .from('promotion')
+        .insert([promotionData]);
+
+      if (error) throw error;
+
       message.success('Promotion processed successfully!');
       setIsPromotionModalVisible(false);
       promotionForm.resetFields();
@@ -606,10 +1059,16 @@ const AdminDashboard = () => {
         reason: values.reason,
         amount: values.amount,
         bonusdate: values.bonusdate.format('YYYY-MM-DD'),
-        processedby: profile.empid
+        processedby: user?.id,
+        created_at: new Date().toISOString()
       };
 
-      await GenericDB.insertData('bonus', bonusData);
+      const { error } = await supabase
+        .from('bonus')
+        .insert([bonusData]);
+
+      if (error) throw error;
+
       message.success('Bonus added successfully!');
       setIsBonusModalVisible(false);
       bonusForm.resetFields();
@@ -623,15 +1082,21 @@ const AdminDashboard = () => {
     try {
       const incrementData = {
         empid: values.empid,
-        percenatge: values.percentage,
+        percentage: values.percentage,
         amount: values.amount,
         lastincrementdate: values.lastincrementdate.format('YYYY-MM-DD'),
         nextincrementdate: values.nextincrementdate.format('YYYY-MM-DD'),
         approval: 'approved',
-        processed_by: profile.empid
+        processed_by: user?.id,
+        created_at: new Date().toISOString()
       };
 
-      await GenericDB.insertData('increment', incrementData);
+      const { error } = await supabase
+        .from('increment')
+        .insert([incrementData]);
+
+      if (error) throw error;
+
       message.success('Increment processed successfully!');
       setIsIncrementModalVisible(false);
       incrementForm.resetFields();
@@ -641,7 +1106,7 @@ const AdminDashboard = () => {
     }
   };
 
-  const handleAssignTask = async (values) => {
+  const handleAddTask = async (values) => {
     try {
       const taskData = {
         title: values.title,
@@ -649,19 +1114,25 @@ const AdminDashboard = () => {
         priority: values.priority,
         type: values.type,
         due_date: values.due_date.format('YYYY-MM-DD'),
-        status: 'assigned',
-        assignee_id: values.empid,
-        created_by: profile.empid
+        status: 'pending',
+        assignee_id: values.assignee_id,
+        created_by: user?.id,
+        created_at: new Date().toISOString()
       };
 
-      await GenericDB.insertData('tasks', taskData);
-      message.success('Task assigned successfully!');
+      const { error } = await supabase
+        .from('tasks')
+        .insert([taskData]);
+
+      if (error) throw error;
+
+      message.success('Task added successfully!');
       setIsTaskModalVisible(false);
       taskForm.resetFields();
       fetchTasks();
     } catch (error) {
-      console.error('Error assigning task:', error);
-      message.error('Failed to assign task');
+      console.error('Error adding task:', error);
+      message.error('Failed to add task');
     }
   };
 
@@ -676,10 +1147,16 @@ const AdminDashboard = () => {
         location: values.location,
         type: values.type,
         status: 'scheduled',
-        empid: values.empid
+        empid: user?.id,
+        created_at: new Date().toISOString()
       };
 
-      await GenericDB.insertData('meeting', meetingData);
+      const { error } = await supabase
+        .from('meeting')
+        .insert([meetingData]);
+
+      if (error) throw error;
+
       message.success('Meeting scheduled successfully!');
       setIsMeetingModalVisible(false);
       meetingForm.resetFields();
@@ -694,140 +1171,97 @@ const AdminDashboard = () => {
     try {
       const feedbackData = {
         empid: values.empid,
+        feedback_type: values.feedback_type,
+        subject: values.subject,
+        message: values.message,
         rating: values.rating,
-        comments: values.comments,
-        evaluator_id: profile.empid,
-        rating_date: new Date()
+        status: 'submitted',
+        submitted_at: new Date().toISOString(),
+        created_at: new Date().toISOString()
       };
 
-      await GenericDB.insertData('performance_rating', feedbackData);
+      const { error } = await supabase
+        .from('employee_feedback')
+        .insert([feedbackData]);
+
+      if (error) throw error;
+
       message.success('Feedback submitted successfully!');
       setIsFeedbackModalVisible(false);
       feedbackForm.resetFields();
-      fetchPerformanceData();
     } catch (error) {
       console.error('Error submitting feedback:', error);
       message.error('Failed to submit feedback');
     }
   };
 
-  const handleApproveLeave = async (leaveId) => {
+  const handleUpdateDateRange = async (values) => {
     try {
-      await GenericDB.updateData('employeeleave', { 
-        leavestatus: 'approved',
-        approvedby: profile.empid
-      }, { leaveid: leaveId });
+      const { dateRange: newDateRange } = values;
+      setDateRange(newDateRange);
+      setIsDateRangeModalVisible(false);
+      dateRangeForm.resetFields();
       
-      message.success('Leave approved successfully!');
-      fetchLeaveRequests();
-    } catch (error) {
-      console.error('Error approving leave:', error);
-      message.error('Failed to approve leave');
-    }
-  };
-
-  const handleRejectLeave = async (leaveId) => {
-    try {
-      await GenericDB.updateData('employeeleave', { 
-        leavestatus: 'rejected',
-        approvedby: profile.empid
-      }, { leaveid: leaveId });
+      message.info('Updating data for new date range...');
       
-      message.success('Leave rejected successfully!');
-      fetchLeaveRequests();
-    } catch (error) {
-      console.error('Error rejecting leave:', error);
-      message.error('Failed to reject leave');
-    }
-  };
-
-  const handleApproveLoan = async (loanId) => {
-    try {
-      await GenericDB.updateData('loanrequest', { 
-        status: 'approved',
-        processedby: profile.empid,
-        processedat: new Date()
-      }, { loanrequestid: loanId });
+      // Refetch all data with new date range
+      await Promise.all([
+        fetchRecentActivities(),
+        fetchLeaveRequests(),
+        fetchLoanRequests(),
+        fetchAttendanceData(),
+        fetchSalaryData(),
+        fetchKPIData(),
+        fetchTrainingRequests(),
+        fetchPromotionRequests(),
+        fetchEpfEtfData(),
+        fetchPerformanceData(),
+        fetchTasks(),
+        fetchMeetings()
+      ]);
       
-      message.success('Loan approved successfully!');
-      fetchLoanRequests();
+      message.success('Data updated for selected date range!');
     } catch (error) {
-      console.error('Error approving loan:', error);
-      message.error('Failed to approve loan');
+      console.error('Error updating date range:', error);
+      message.error('Failed to update date range');
     }
   };
 
-  const showEditUserModal = (employee) => {
-    setSelectedEmployee(employee);
-    editUserForm.setFieldsValue({
-      first_name: employee.first_name,
-      last_name: employee.last_name,
-      email: employee.email,
-      role: employee.role,
-      department: employee.department,
-      phone: employee.phone,
-      gender: employee.gender,
-      address: employee.empaddress,
-      status: employee.status,
-      is_active: employee.is_active
-    });
-    setIsEditUserModalVisible(true);
-  };
-
-  const showEmployeeDetail = (employee) => {
-    setSelectedEmployeeDetail(employee);
-    setIsEmployeeDetailVisible(true);
-  };
-
-  const generateReport = async (type) => {
+  const handleViewEmployeeDetails = async (employee) => {
     try {
-      let doc;
-      switch (type) {
-        case 'staff':
-          doc = await ReportService.generateEmployeeReport();
-          ReportService.downloadPDF(doc, 'Staff_Report');
-          break;
-        case 'salary':
-          doc = await ReportService.generateSalaryReport({ month: dayjs().format('YYYY-MM') });
-          ReportService.downloadPDF(doc, 'Salary_Report');
-          break;
-        case 'attendance':
-          doc = await ReportService.generateAttendanceReport({ month: dayjs().format('YYYY-MM') });
-          ReportService.downloadPDF(doc, 'Attendance_Report');
-          break;
-        case 'financial':
-          doc = await ReportService.generateFinancialReport();
-          ReportService.downloadPDF(doc, 'Financial_Report');
-          break;
-        case 'performance':
-          doc = await ReportService.generatePerformanceReport();
-          ReportService.downloadPDF(doc, 'Performance_Report');
-          break;
-        default:
-          message.warning('Report type not implemented');
-          return;
-      }
-      message.success('Report generated successfully!');
+      setSelectedEmployeeDetail(employee);
+      setIsEmployeeDetailVisible(true);
     } catch (error) {
-      console.error('Error generating report:', error);
-      message.error(error.message || 'Failed to generate report');
+      console.error('Error fetching employee details:', error);
+      message.error('Failed to load employee details');
     }
   };
 
-  // Column definitions
+  // Search and filter functions
+  const searchEmployees = (searchTerm) => {
+    if (!searchTerm) return allEmployees;
+    
+    const term = searchTerm.toLowerCase();
+    return allEmployees.filter(emp => 
+      emp.full_name?.toLowerCase().includes(term) ||
+      emp.email?.toLowerCase().includes(term) ||
+      emp.department?.toLowerCase().includes(term) ||
+      emp.role?.toLowerCase().includes(term)
+    );
+  };
+
+  // Table columns
   const employeeColumns = [
     {
       title: 'Employee',
-      dataIndex: 'first_name',
-      key: 'employee',
+      dataIndex: 'full_name',
+      key: 'full_name',
       render: (text, record) => (
         <Space>
-          <Avatar size="small" icon={<UserOutlined />} src={record.avatarurl} />
+          <Avatar size="small" icon={<UserOutlined />} />
           <div>
-            <Button type="link" onClick={() => showEmployeeDetail(record)}>
-              {record.first_name} {record.last_name}
-            </Button>
-            <div style={{ fontSize: 12, color: '#888' }}>{record.email}</div>
+            <div style={{ fontWeight: 500 }}>{text}</div>
+            <div style={{ fontSize: '12px', color: '#666' }}>{record.email}</div>
           </div>
         </Space>
       ),
@@ -836,32 +1270,29 @@ const AdminDashboard = () => {
       title: 'Department',
       dataIndex: 'department',
       key: 'department',
-      render: dept => <Tag>{dept || 'N/A'}</Tag>
+      render: (department) => <Tag color="blue">{department}</Tag>,
     },
     {
       title: 'Role',
       dataIndex: 'role',
       key: 'role',
-      render: role => <Tag color="blue">{role}</Tag>
+      render: (role) => <Tag color={role === 'admin' ? 'red' : 'green'}>{role}</Tag>,
     },
     {
       title: 'Status',
       dataIndex: 'status',
       key: 'status',
-      render: status => (
+      render: (status) => (
         <Tag color={status === 'Active' ? 'green' : 'red'}>
-          {status}
+          {status === 'Active' ? <CheckCircleOutlined /> : <CloseCircleOutlined />} {status}
         </Tag>
-      )
+      ),
     },
     {
-      title: 'Leave Balance',
-      key: 'leave_balance',
-      render: (_, record) => (
-        <Tooltip title={`Sick: ${record.sickleavebalance} | Full: ${record.fulldayleavebalance} | Half: ${record.halfdayleavebalance}`}>
-          <Tag color="purple">View Balance</Tag>
-        </Tooltip>
-      )
+      title: 'Basic Salary',
+      dataIndex: 'basicsalary',
+      key: 'basicsalary',
+      render: (salary) => `LKR ${salary?.toLocaleString() || '0'}`,
     },
     {
       title: 'Actions',
@@ -869,1181 +1300,1007 @@ const AdminDashboard = () => {
       render: (_, record) => (
         <Space>
           <Tooltip title="View Details">
-            <Button icon={<EyeOutlined />} onClick={() => showEmployeeDetail(record)} />
+            <Button 
+              type="link" 
+              icon={<EyeOutlined />} 
+              onClick={() => handleViewEmployeeDetails(record)}
+            />
           </Tooltip>
           <Tooltip title="Edit">
-            <Button icon={<EditOutlined />} onClick={() => showEditUserModal(record)} />
+            <Button 
+              type="link" 
+              icon={<EditOutlined />} 
+              onClick={() => {
+                setSelectedEmployee(record);
+                editUserForm.setFieldsValue({
+                  first_name: record.full_name?.split(' ')[0] || '',
+                  last_name: record.full_name?.split(' ').slice(1).join(' ') || '',
+                  email: record.email,
+                  role: record.role,
+                  department: record.department,
+                  phone: record.phone,
+                  gender: record.gender,
+                  address: record.empaddress,
+                  status: record.status,
+                  is_active: record.is_active,
+                  basicsalary: record.basicsalary
+                });
+                setIsEditUserModalVisible(true);
+              }}
+            />
           </Tooltip>
-          <Tooltip title="Apply Leave">
-            <Button icon={<CalendarOutlined />} onClick={() => {
-              leaveForm.setFieldsValue({ empid: record.empid });
-              setIsLeaveModalVisible(true);
-            }} />
-          </Tooltip>
-          <Tooltip title="Mark Attendance">
-            <Button icon={<CheckCircleOutlined />} onClick={() => {
-              attendanceForm.setFieldsValue({ empid: record.empid });
-              setIsAttendanceModalVisible(true);
-            }} />
-          </Tooltip>
-          <Popconfirm title="Deactivate this user?" onConfirm={() => handleDeleteUser(record)}>
-            <Button danger icon={<DeleteOutlined />} />
+          <Popconfirm
+            title="Are you sure to deactivate this user?"
+            onConfirm={() => handleDeleteUser(record)}
+            okText="Yes"
+            cancelText="No"
+          >
+            <Tooltip title="Deactivate">
+              <Button type="link" danger icon={<DeleteOutlined />} />
+            </Tooltip>
           </Popconfirm>
         </Space>
-      )
-    }
+      ),
+    },
   ];
 
-  const leaveRequestColumns = [
+  const leaveColumns = [
     {
       title: 'Employee',
-      dataIndex: 'empid',
-      key: 'employee',
-      render: (empid) => {
-        const employee = allEmployees.find(e => e.empid === empid);
-        return employee ? `${employee.first_name} ${employee.last_name}` : 'N/A';
-      }
+      dataIndex: ['employee', 'full_name'],
+      key: 'employee_name',
     },
     {
       title: 'Leave Type',
-      dataIndex: 'leavetypeid',
+      dataIndex: ['leavetype', 'leavetype'],
       key: 'leavetype',
-      render: (leavetypeid) => {
-        const leaveType = leaveTypes.find(lt => lt.leavetypeid === leavetypeid);
-        return leaveType ? leaveType.leavetype : 'N/A';
-      }
     },
     {
-      title: 'From - To',
-      key: 'dates',
-      render: (_, record) => `${record.leavefromdate} to ${record.leavetodate}`
+      title: 'From Date',
+      dataIndex: 'leavefromdate',
+      key: 'leavefromdate',
+      render: (date) => dayjs(date).format('MMM D, YYYY'),
+    },
+    {
+      title: 'To Date',
+      dataIndex: 'leavetodate',
+      key: 'leavetodate',
+      render: (date) => dayjs(date).format('MMM D, YYYY'),
     },
     {
       title: 'Duration',
       dataIndex: 'duration',
       key: 'duration',
-      render: duration => `${duration} days`
+      render: (duration) => `${duration} days`,
     },
     {
       title: 'Status',
       dataIndex: 'leavestatus',
-      key: 'status',
-      render: status => (
-        <Tag color={status === 'approved' ? 'green' : status === 'rejected' ? 'red' : 'orange'}>
-          {status?.toUpperCase()}
-        </Tag>
-      )
+      key: 'leavestatus',
+      render: (status) => {
+        const statusColors = {
+          pending: 'orange',
+          approved: 'green',
+          rejected: 'red'
+        };
+        return <Tag color={statusColors[status] || 'default'}>{status}</Tag>;
+      },
     },
     {
-      title: 'Actions',
-      key: 'actions',
-      render: (_, record) => (
-        <Space>
-          {record.leavestatus === 'pending' && (
-            <>
-              <Button size="small" type="primary" onClick={() => handleApproveLeave(record.leaveid)}>
-                Approve
-              </Button>
-              <Button size="small" danger onClick={() => handleRejectLeave(record.leaveid)}>
-                Reject
-              </Button>
-            </>
-          )}
-        </Space>
-      )
-    }
+      title: 'Reason',
+      dataIndex: 'leavereason',
+      key: 'leavereason',
+      ellipsis: true,
+    },
   ];
 
-  const loanRequestColumns = [
+  const loanColumns = [
     {
       title: 'Employee',
-      dataIndex: 'empid',
-      key: 'employee',
-      render: (empid) => {
-        const employee = allEmployees.find(e => e.empid === empid);
-        return employee ? `${employee.first_name} ${employee.last_name}` : 'N/A';
-      }
+      dataIndex: ['employee', 'full_name'],
+      key: 'employee_name',
+    },
+    {
+      title: 'Loan Type',
+      dataIndex: ['loantype', 'loantype'],
+      key: 'loantype',
     },
     {
       title: 'Amount',
       dataIndex: 'amount',
       key: 'amount',
-      render: amount => `LKR ${amount?.toLocaleString()}`
+      render: (amount) => `LKR ${amount?.toLocaleString() || '0'}`,
     },
     {
       title: 'Duration',
       dataIndex: 'duration',
       key: 'duration',
-      render: duration => `${duration} months`
-    },
-    {
-      title: 'Interest Rate',
-      dataIndex: 'interestrate',
-      key: 'interestrate',
-      render: rate => `${rate}%`
+      render: (duration) => `${duration} months`,
     },
     {
       title: 'Status',
       dataIndex: 'status',
       key: 'status',
-      render: status => (
-        <Tag color={status === 'approved' ? 'green' : status === 'rejected' ? 'red' : 'orange'}>
-          {status?.toUpperCase()}
-        </Tag>
-      )
+      render: (status) => {
+        const statusColors = {
+          pending: 'orange',
+          approved: 'green',
+          rejected: 'red'
+        };
+        return <Tag color={statusColors[status] || 'default'}>{status}</Tag>;
+      },
     },
     {
-      title: 'Actions',
-      key: 'actions',
-      render: (_, record) => (
-        <Space>
-          {record.status === 'pending' && (
-            <Button size="small" type="primary" onClick={() => handleApproveLoan(record.loanrequestid)}>
-              Approve
-            </Button>
-          )}
-        </Space>
-      )
-    }
+      title: 'Applied Date',
+      dataIndex: 'date',
+      key: 'date',
+      render: (date) => dayjs(date).format('MMM D, YYYY'),
+    },
   ];
 
-  return (
-    <div style={{ padding: 24 }}>
-      <Alert
-        message="Super Admin Access"
-        description="You have full system access including employee management, leave/attendance tracking, salary processing, loan approvals, and comprehensive reporting."
-        type="info"
-        showIcon
-        style={{ marginBottom: 16 }}
-      />
-
-      <Row gutter={[16, 16]}>
-        <Col xs={24} sm={12} md={6}>
-          <Card>
-            <Statistic
-              title="Total Employees"
-              value={systemStats.totalEmployees || 0}
-              prefix={<TeamOutlined />}
-            />
-          </Card>
-        </Col>
-        <Col xs={24} sm={12} md={6}>
-          <Card>
-            <Statistic
-              title="Active Employees"
-              value={systemStats.activeEmployees || 0}
-              prefix={<UserOutlined />}
-            />
-          </Card>
-        </Col>
-        <Col xs={24} sm={12} md={6}>
-          <Card>
-            <Statistic
-              title="Departments"
-              value={systemStats.departments || 0}
-              prefix={<DatabaseOutlined />}
-            />
-          </Card>
-        </Col>
-        <Col xs={24} sm={12} md={6}>
-          <Card>
-            <Statistic
-              title="Pending Leaves"
-              value={systemStats.pendingLeaves || 0}
-              prefix={<CalendarOutlined />}
-            />
-          </Card>
-        </Col>
-      </Row>
-
-      <Divider />
-
-      <Tabs activeKey={activeTab} onChange={setActiveTab}>
-        <TabPane tab="Overview" key="overview">
-          <Row gutter={[16, 16]}>
-            <Col xs={24} md={16}>
-              <Card
-                title="Employee Management"
-                extra={
-                  <Space>
-                    <Button icon={<BarChartOutlined />} onClick={() => generateReport('staff')}>
-                      Staff Report
-                    </Button>
-                    <Button icon={<BarChartOutlined />} onClick={() => generateReport('salary')}>
-                      Salary Report
-                    </Button>
-                    <Button icon={<BarChartOutlined />} onClick={() => generateReport('attendance')}>
-                      Attendance Report
-                    </Button>
-                    <Button type="primary" icon={<PlusOutlined />} onClick={() => setIsAddUserModalVisible(true)}>
-                      Add User
-                    </Button>
-                  </Space>
-                }
-              >
-                <Table
-                  rowKey="empid"
-                  columns={employeeColumns}
-                  dataSource={allEmployees}
-                  loading={loading}
-                  pagination={{ pageSize: 8 }}
-                />
-              </Card>
-            </Col>
-            <Col xs={24} md={8}>
-              <Card title="Quick Actions" style={{ marginBottom: 16 }}>
-                <Space direction="vertical" style={{ width: '100%' }}>
-                  <Button 
-                    icon={<CalendarOutlined />} 
-                    block 
-                    onClick={() => setIsLeaveModalVisible(true)}
-                  >
-                    Apply Leave for Employee
-                  </Button>
-                  <Button 
-                    icon={<CheckCircleOutlined />} 
-                    block 
-                    onClick={() => setIsAttendanceModalVisible(true)}
-                  >
-                    Mark Attendance
-                  </Button>
-                  <Button 
-                    icon={<DollarOutlined />} 
-                    block 
-                    onClick={() => setIsSalaryModalVisible(true)}
-                  >
-                    Process Salary
-                  </Button>
-                  <Button 
-                    icon={<BankOutlined />} 
-                    block 
-                    onClick={() => setIsLoanModalVisible(true)}
-                  >
-                    Manage Loans
-                  </Button>
-                  <Button 
-                    icon={<CalculatorOutlined />} 
-                    block 
-                    onClick={() => setIsEpfEtfModalVisible(true)}
-                  >
-                    Calculate EPF/ETF
-                  </Button>
-                  <Button 
-                    icon={<FundOutlined />} 
-                    block 
-                    onClick={() => setIsKPIModalVisible(true)}
-                  >
-                    Update KPI
-                  </Button>
-                  <Button 
-                    icon={<RocketOutlined />} 
-                    block 
-                    onClick={() => setIsPromotionModalVisible(true)}
-                  >
-                    Process Promotion
-                  </Button>
-                  <Button 
-                    icon={<GiftOutlined />} 
-                    block 
-                    onClick={() => setIsBonusModalVisible(true)}
-                  >
-                    Add Bonus
-                  </Button>
-                  <Button 
-                    icon={<RiseOutlined />} 
-                    block 
-                    onClick={() => setIsIncrementModalVisible(true)}
-                  >
-                    Process Increment
-                  </Button>
-                  <Button 
-                    icon={<SolutionOutlined />} 
-                    block 
-                    onClick={() => setIsTaskModalVisible(true)}
-                  >
-                    Assign Task
-                  </Button>
-                  <Button 
-                    icon={<ClockCircleOutlined />} 
-                    block 
-                    onClick={() => setIsMeetingModalVisible(true)}
-                  >
-                    Schedule Meeting
-                  </Button>
-                  <Button 
-                    icon={<StarOutlined />} 
-                    block 
-                    onClick={() => setIsFeedbackModalVisible(true)}
-                  >
-                    Give Feedback
-                  </Button>
-                </Space>
-              </Card>
-              
-              <Card title="Recent Activities">
-                <List
-                  itemLayout="horizontal"
-                  dataSource={recentActivities}
-                  renderItem={item => (
-                    <List.Item>
-                      <List.Item.Meta
-                        avatar={<Avatar icon={<SettingOutlined />} />}
-                        title={item.action}
-                        description={`${item.user_id} • ${new Date(item.created_at).toLocaleString()}`}
-                      />
-                    </List.Item>
-                  )}
-                />
-              </Card>
-            </Col>
-          </Row>
-        </TabPane>
-
-        <TabPane tab="Leave Management" key="leaves">
-          <Card
-            title="Leave Requests"
-            extra={
-              <Button type="primary" icon={<PlusOutlined />} onClick={() => setIsLeaveModalVisible(true)}>
-                Apply Leave
-              </Button>
-            }
-          >
-            <Table
-              rowKey="leaveid"
-              columns={leaveRequestColumns}
-              dataSource={leaveRequests}
-              loading={loading}
-              pagination={{ pageSize: 10 }}
-            />
-          </Card>
-        </TabPane>
-
-        <TabPane tab="Financial" key="financial">
-          <Row gutter={[16, 16]}>
-            <Col span={12}>
-              <Card title="Loan Requests" extra={
-                <Button type="primary" icon={<PlusOutlined />} onClick={() => setIsLoanModalVisible(true)}>
-                  New Loan
-                </Button>
-              }>
-                <Table
-                  rowKey="loanrequestid"
-                  columns={loanRequestColumns}
-                  dataSource={loanRequests}
-                  loading={loading}
-                  pagination={{ pageSize: 5 }}
-                />
-              </Card>
-            </Col>
-            <Col span={12}>
-              <Card title="Salary Processing" extra={
-                <Button type="primary" icon={<PlusOutlined />} onClick={() => setIsSalaryModalVisible(true)}>
-                  Process Salary
-                </Button>
-              }>
-                <List
-                  dataSource={salaryData.slice(0, 5)}
-                  renderItem={item => (
-                    <List.Item>
-                      <List.Item.Meta
-                        title={`LKR ${item.totalsalary?.toLocaleString()}`}
-                        description={`Date: ${item.salarydate}`}
-                      />
-                    </List.Item>
-                  )}
-                />
-              </Card>
-            </Col>
-          </Row>
-        </TabPane>
-
-        <TabPane tab="Reports" key="reports">
-          <Row gutter={[16, 16]}>
-            <Col span={6}>
-              <Card hoverable onClick={() => generateReport('staff')}>
-                <Statistic title="Staff Report" value=" " prefix={<TeamOutlined />} />
-              </Card>
-            </Col>
-            <Col span={6}>
-              <Card hoverable onClick={() => generateReport('salary')}>
-                <Statistic title="Salary Report" value=" " prefix={<DollarOutlined />} />
-              </Card>
-            </Col>
-            <Col span={6}>
-              <Card hoverable onClick={() => generateReport('attendance')}>
-                <Statistic title="Attendance Report" value=" " prefix={<CheckCircleOutlined />} />
-              </Card>
-            </Col>
-            <Col span={6}>
-              <Card hoverable onClick={() => generateReport('financial')}>
-                <Statistic title="Financial Report" value=" " prefix={<PieChartOutlined />} />
-              </Card>
-            </Col>
-          </Row>
-        </TabPane>
-      </Tabs>
-
-      {/* Add User Modal */}
-      <Modal
-        title="Add New User"
-        open={isAddUserModalVisible}
-        onCancel={() => setIsAddUserModalVisible(false)}
-        onOk={() => userForm.submit()}
-        okText="Create"
-        width={600}
-      >
-        <Form layout="vertical" form={userForm} onFinish={handleAddUser}>
-          <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item label="First Name" name="first_name" rules={[{ required: true }]}>
-                <Input />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item label="Last Name" name="last_name" rules={[{ required: true }]}>
-                <Input />
-              </Form.Item>
-            </Col>
-          </Row>
-          <Form.Item label="Email" name="email" rules={[{ required: true, type: 'email' }]}>
-            <Input prefix={<MailOutlined />} />
-          </Form.Item>
-          <Form.Item label="Phone" name="phone">
-            <Input prefix={<PhoneOutlined />} />
-          </Form.Item>
-          <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item label="Role" name="role" rules={[{ required: true }]}>
-                <Select>
-                  <Option value="admin">Admin</Option>
-                  <Option value="hr">HR</Option>
-                  <Option value="manager">Manager</Option>
-                  <Option value="accountant">Accountant</Option>
-                  <Option value="employee">Employee</Option>
-                </Select>
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item label="Department" name="department" rules={[{ required: true }]}>
-                <Select>
-                  {departments.map(d => (
-                    <Option key={d.departmentid} value={d.departmentname}>
-                      {d.departmentname}
-                    </Option>
-                  ))}
-                </Select>
-              </Form.Item>
-            </Col>
-          </Row>
-          <Form.Item label="Gender" name="gender">
-            <Select>
-              <Option value="Male">Male</Option>
-              <Option value="Female">Female</Option>
-              <Option value="Other">Other</Option>
-            </Select>
-          </Form.Item>
-          <Form.Item label="Address" name="address">
-            <TextArea rows={3} />
-          </Form.Item>
-        </Form>
-      </Modal>
-
-      {/* Edit User Modal */}
-      <Modal
-        title="Edit User"
-        open={isEditUserModalVisible}
-        onCancel={() => setIsEditUserModalVisible(false)}
-        onOk={() => editUserForm.submit()}
-        okText="Save"
-        width={600}
-      >
-        <Form layout="vertical" form={editUserForm} onFinish={handleEditUser}>
-          <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item label="First Name" name="first_name" rules={[{ required: true }]}>
-                <Input />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item label="Last Name" name="last_name" rules={[{ required: true }]}>
-                <Input />
-              </Form.Item>
-            </Col>
-          </Row>
-          <Form.Item label="Email" name="email" rules={[{ required: true, type: 'email' }]}>
-            <Input prefix={<MailOutlined />} />
-          </Form.Item>
-          <Form.Item label="Phone" name="phone">
-            <Input prefix={<PhoneOutlined />} />
-          </Form.Item>
-          <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item label="Role" name="role" rules={[{ required: true }]}>
-                <Select>
-                  <Option value="admin">Admin</Option>
-                  <Option value="hr">HR</Option>
-                  <Option value="manager">Manager</Option>
-                  <Option value="accountant">Accountant</Option>
-                  <Option value="employee">Employee</Option>
-                </Select>
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item label="Department" name="department" rules={[{ required: true }]}>
-                <Select>
-                  {departments.map(d => (
-                    <Option key={d.departmentid} value={d.departmentname}>
-                      {d.departmentname}
-                    </Option>
-                  ))}
-                </Select>
-              </Form.Item>
-            </Col>
-          </Row>
-          <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item label="Status" name="status">
-                <Select>
-                  <Option value="Active">Active</Option>
-                  <Option value="Inactive">Inactive</Option>
-                </Select>
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item label="Active" name="is_active">
-                <Select>
-                  <Option value={true}>Yes</Option>
-                  <Option value={false}>No</Option>
-                </Select>
-              </Form.Item>
-            </Col>
-          </Row>
-          <Form.Item label="Address" name="address">
-            <TextArea rows={3} />
-          </Form.Item>
-        </Form>
-      </Modal>
-
-      {/* Apply Leave Modal */}
-      <Modal
-        title="Apply Leave for Employee"
-        open={isLeaveModalVisible}
-        onCancel={() => setIsLeaveModalVisible(false)}
-        onOk={() => leaveForm.submit()}
-        okText="Apply Leave"
-        width={500}
-      >
-        <Form layout="vertical" form={leaveForm} onFinish={handleApplyLeaveForUser}>
-          <Form.Item label="Select Employee" name="empid" rules={[{ required: true }]}>
-            <Select placeholder="Choose employee">
-              {allEmployees.map(emp => (
-                <Option key={emp.empid} value={emp.empid}>
-                  {emp.first_name} {emp.last_name}
-                </Option>
-              ))}
-            </Select>
-          </Form.Item>
-          <Form.Item label="Leave Type" name="leavetypeid" rules={[{ required: true }]}>
-            <Select>
-              {leaveTypes.map(lt => (
-                <Option key={lt.leavetypeid} value={lt.leavetypeid}>
-                  {lt.leavetype}
-                </Option>
-              ))}
-            </Select>
-          </Form.Item>
-          <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item label="From Date" name="leavefromdate" rules={[{ required: true }]}>
-                <DatePicker style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item label="To Date" name="leavetodate" rules={[{ required: true }]}>
-                <DatePicker style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-          </Row>
-          <Form.Item label="Reason" name="leavereason">
-            <TextArea rows={3} />
-          </Form.Item>
-        </Form>
-      </Modal>
-
-      {/* Mark Attendance Modal */}
-      <Modal
-        title="Mark Attendance"
-        open={isAttendanceModalVisible}
-        onCancel={() => setIsAttendanceModalVisible(false)}
-        onOk={() => attendanceForm.submit()}
-        okText="Mark Attendance"
-        width={500}
-      >
-        <Form layout="vertical" form={attendanceForm} onFinish={handleMarkAttendance}>
-          <Form.Item label="Select Employee" name="empid" rules={[{ required: true }]}>
-            <Select placeholder="Choose employee">
-              {allEmployees.map(emp => (
-                <Option key={emp.empid} value={emp.empid}>
-                  {emp.first_name} {emp.last_name}
-                </Option>
-              ))}
-            </Select>
-          </Form.Item>
-          <Form.Item label="Date" name="date" rules={[{ required: true }]}>
-            <DatePicker style={{ width: '100%' }} />
-          </Form.Item>
-          <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item label="In Time" name="intime" rules={[{ required: true }]}>
-                <TimePicker style={{ width: '100%' }} format="HH:mm" />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item label="Out Time" name="outtime">
-                <TimePicker style={{ width: '100%' }} format="HH:mm" />
-              </Form.Item>
-            </Col>
-          </Row>
-          <Form.Item label="Status" name="status" rules={[{ required: true }]}>
-            <Select>
-              <Option value="Present">Present</Option>
-              <Option value="Absent">Absent</Option>
-              <Option value="Half Day">Half Day</Option>
-              <Option value="Late">Late</Option>
-            </Select>
-          </Form.Item>
-        </Form>
-      </Modal>
-
-      {/* Process Salary Modal */}
-      <Modal
-        title="Process Salary"
-        open={isSalaryModalVisible}
-        onCancel={() => setIsSalaryModalVisible(false)}
-        onOk={() => salaryForm.submit()}
-        okText="Process Salary"
-        width={600}
-      >
-        <Form layout="vertical" form={salaryForm} onFinish={handleProcessSalary}>
-          <Form.Item label="Select Employee" name="empid" rules={[{ required: true }]}>
-            <Select placeholder="Choose employee">
-              {allEmployees.map(emp => (
-                <Option key={emp.empid} value={emp.empid}>
-                  {emp.first_name} {emp.last_name}
-                </Option>
-              ))}
-            </Select>
-          </Form.Item>
-          <Form.Item label="Salary Date" name="salarydate" rules={[{ required: true }]}>
-            <DatePicker style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item label="Basic Salary" name="basicsalary" rules={[{ required: true }]}>
-            <InputNumber
-              style={{ width: '100%' }}
-              formatter={value => `LKR ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
-              parser={value => value.replace(/LKR\s?|(,*)/g, '')}
-            />
-          </Form.Item>
-          <Row gutter={16}>
-            <Col span={8}>
-              <Form.Item label="OT Pay" name="otpay">
-                <InputNumber
-                  style={{ width: '100%' }}
-                  formatter={value => `LKR ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
-                  parser={value => value.replace(/LKR\s?|(,*)/g, '')}
-                />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item label="Increment Pay" name="incrementpay">
-                <InputNumber
-                  style={{ width: '100%' }}
-                  formatter={value => `LKR ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
-                  parser={value => value.replace(/LKR\s?|(,*)/g, '')}
-                />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item label="Bonus Pay" name="bonuspay">
-                <InputNumber
-                  style={{ width: '100%' }}
-                  formatter={value => `LKR ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
-                  parser={value => value.replace(/LKR\s?|(,*)/g, '')}
-                />
-              </Form.Item>
-            </Col>
-          </Row>
-        </Form>
-      </Modal>
-
-      {/* Process Loan Modal */}
-      <Modal
-        title="Process Loan"
-        open={isLoanModalVisible}
-        onCancel={() => setIsLoanModalVisible(false)}
-        onOk={() => loanForm.submit()}
-        okText="Process Loan"
-        width={500}
-      >
-        <Form layout="vertical" form={loanForm} onFinish={handleProcessLoan}>
-          <Form.Item label="Select Employee" name="empid" rules={[{ required: true }]}>
-            <Select placeholder="Choose employee">
-              {allEmployees.map(emp => (
-                <Option key={emp.empid} value={emp.empid}>
-                  {emp.first_name} {emp.last_name}
-                </Option>
-              ))}
-            </Select>
-          </Form.Item>
-          <Form.Item label="Loan Type" name="loantypeid" rules={[{ required: true }]}>
-            <Select>
-              {loanTypes.map(lt => (
-                <Option key={lt.loantypeid} value={lt.loantypeid}>
-                  {lt.loantype}
-                </Option>
-              ))}
-            </Select>
-          </Form.Item>
-          <Form.Item label="Amount" name="amount" rules={[{ required: true }]}>
-            <InputNumber
-              style={{ width: '100%' }}
-              formatter={value => `LKR ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
-              parser={value => value.replace(/LKR\s?|(,*)/g, '')}
-            />
-          </Form.Item>
-          <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item label="Duration (months)" name="duration" rules={[{ required: true }]}>
-                <InputNumber style={{ width: '100%' }} min={1} max={60} />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item label="Interest Rate (%)" name="interestrate" rules={[{ required: true }]}>
-                <InputNumber style={{ width: '100%' }} min={1} max={50} step={0.1} />
-              </Form.Item>
-            </Col>
-          </Row>
-          <Form.Item label="Date" name="date" rules={[{ required: true }]}>
-            <DatePicker style={{ width: '100%' }} />
-          </Form.Item>
-        </Form>
-      </Modal>
-
-      {/* Update KPI Modal */}
-      <Modal
-        title="Update KPI"
-        open={isKPIModalVisible}
-        onCancel={() => setIsKPIModalVisible(false)}
-        onOk={() => kpiForm.submit()}
-        okText="Update KPI"
-        width={500}
-      >
-        <Form layout="vertical" form={kpiForm} onFinish={handleUpdateKPI}>
-          <Form.Item label="Select Employee" name="empid" rules={[{ required: true }]}>
-            <Select placeholder="Choose employee">
-              {allEmployees.map(emp => (
-                <Option key={emp.empid} value={emp.empid}>
-                  {emp.first_name} {emp.last_name}
-                </Option>
-              ))}
-            </Select>
-          </Form.Item>
-          <Form.Item label="KPI Value" name="kpivalue" rules={[{ required: true }]}>
-            <InputNumber style={{ width: '100%' }} min={0} max={100} />
-          </Form.Item>
-          <Form.Item label="Calculation Date" name="calculatedate" rules={[{ required: true }]}>
-            <DatePicker style={{ width: '100%' }} />
-          </Form.Item>
-        </Form>
-      </Modal>
-
-      {/* Calculate EPF/ETF Modal */}
-      <Modal
-        title="Calculate EPF/ETF"
-        open={isEpfEtfModalVisible}
-        onCancel={() => setIsEpfEtfModalVisible(false)}
-        onOk={() => epfEtfForm.submit()}
-        okText="Calculate"
-        width={500}
-      >
-        <Form layout="vertical" form={epfEtfForm} onFinish={handleCalculateEPFETF}>
-          <Form.Item label="Select Employee" name="empid" rules={[{ required: true }]}>
-            <Select placeholder="Choose employee">
-              {allEmployees.map(emp => (
-                <Option key={emp.empid} value={emp.empid}>
-                  {emp.first_name} {emp.last_name}
-                </Option>
-              ))}
-            </Select>
-          </Form.Item>
-          <Form.Item label="Basic Salary" name="basicsalary" rules={[{ required: true }]}>
-            <InputNumber
-              style={{ width: '100%' }}
-              formatter={value => `LKR ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
-              parser={value => value.replace(/LKR\s?|(,*)/g, '')}
-            />
-          </Form.Item>
-          <Alert
-            message="EPF: 8% of basic salary | ETF: 3% of basic salary"
-            type="info"
-            showIcon
+  // Render components
+  const renderOverview = () => (
+    <Row gutter={[16, 16]}>
+      <Col xs={24} sm={12} lg={6}>
+        <Card>
+          <Statistic
+            title="Total Employees"
+            value={systemStats.totalEmployees || 0}
+            prefix={<TeamOutlined />}
+            valueStyle={{ color: '#1890ff' }}
           />
-        </Form>
-      </Modal>
+        </Card>
+      </Col>
+      <Col xs={24} sm={12} lg={6}>
+        <Card>
+          <Statistic
+            title="Active Employees"
+            value={systemStats.activeEmployees || 0}
+            prefix={<UserOutlined />}
+            valueStyle={{ color: '#52c41a' }}
+          />
+        </Card>
+      </Col>
+      <Col xs={24} sm={12} lg={6}>
+        <Card>
+          <Statistic
+            title="Departments"
+            value={systemStats.departments || 0}
+            prefix={<DatabaseOutlined />}
+            valueStyle={{ color: '#722ed1' }}
+          />
+        </Card>
+      </Col>
+      <Col xs={24} sm={12} lg={6}>
+        <Card>
+          <Statistic
+            title="Pending Leaves"
+            value={systemStats.pendingLeaves || 0}
+            prefix={<CalendarOutlined />}
+            valueStyle={{ color: '#fa8c16' }}
+          />
+        </Card>
+      </Col>
 
-      {/* Schedule Training Modal */}
-      <Modal
-        title="Schedule Training"
-        open={isTrainingModalVisible}
-        onCancel={() => setIsTrainingModalVisible(false)}
-        onOk={() => trainingForm.submit()}
-        okText="Schedule Training"
-        width={500}
-      >
-        <Form layout="vertical" form={trainingForm} onFinish={handleAddTraining}>
-          <Form.Item label="Select Employee" name="empid" rules={[{ required: true }]}>
-            <Select placeholder="Choose employee">
-              {allEmployees.map(emp => (
-                <Option key={emp.empid} value={emp.empid}>
-                  {emp.first_name} {emp.last_name}
-                </Option>
-              ))}
-            </Select>
-          </Form.Item>
-          <Form.Item label="Training Topic" name="topic" rules={[{ required: true }]}>
-            <Input />
-          </Form.Item>
-          <Form.Item label="Trainer" name="trainer" rules={[{ required: true }]}>
-            <Input />
-          </Form.Item>
-          <Form.Item label="Venue" name="venue" rules={[{ required: true }]}>
-            <Input />
-          </Form.Item>
-          <Form.Item label="Duration" name="duration" rules={[{ required: true }]}>
-            <Input placeholder="e.g., 2 hours" />
-          </Form.Item>
-          <Form.Item label="Date" name="date" rules={[{ required: true }]}>
-            <DatePicker style={{ width: '100%' }} />
-          </Form.Item>
-        </Form>
-      </Modal>
+      <Col xs={24} sm={12} lg={6}>
+        <Card>
+          <Statistic
+            title="Pending Loans"
+            value={systemStats.pendingLoans || 0}
+            prefix={<DollarOutlined />}
+            valueStyle={{ color: '#fa541c' }}
+          />
+        </Card>
+      </Col>
+      <Col xs={24} sm={12} lg={6}>
+        <Card>
+          <Statistic
+            title="Today Present"
+            value={systemStats.todayPresent || 0}
+            prefix={<CheckCircleOutlined />}
+            valueStyle={{ color: '#13c2c2' }}
+          />
+        </Card>
+      </Col>
+      <Col xs={24} sm={12} lg={6}>
+        <Card>
+          <Statistic
+            title="System Health"
+            value={systemStats.systemHealth || 0}
+            suffix="%"
+            prefix={<PieChartOutlined />}
+            valueStyle={{ color: '#eb2f96' }}
+          />
+        </Card>
+      </Col>
+      <Col xs={24} sm={12} lg={6}>
+        <Card>
+          <Statistic
+            title="New Hires (30d)"
+            value={systemStats.newHires || 0}
+            prefix={<RocketOutlined />}
+            valueStyle={{ color: '#a0d911' }}
+          />
+        </Card>
+      </Col>
 
-      {/* Process Promotion Modal */}
-      <Modal
-        title="Process Promotion"
-        open={isPromotionModalVisible}
-        onCancel={() => setIsPromotionModalVisible(false)}
-        onOk={() => promotionForm.submit()}
-        okText="Process Promotion"
-        width={500}
-      >
-        <Form layout="vertical" form={promotionForm} onFinish={handleProcessPromotion}>
-          <Form.Item label="Select Employee" name="empid" rules={[{ required: true }]}>
-            <Select placeholder="Choose employee">
-              {allEmployees.map(emp => (
-                <Option key={emp.empid} value={emp.empid}>
-                  {emp.first_name} {emp.last_name}
-                </Option>
-              ))}
-            </Select>
-          </Form.Item>
-          <Form.Item label="Current Position" name="oldposition" rules={[{ required: true }]}>
-            <Input />
-          </Form.Item>
-          <Form.Item label="New Position" name="newposition" rules={[{ required: true }]}>
-            <Input />
-          </Form.Item>
-          <Form.Item label="Department" name="department" rules={[{ required: true }]}>
-            <Select>
-              {departments.map(d => (
-                <Option key={d.departmentid} value={d.departmentname}>
-                  {d.departmentname}
-                </Option>
-              ))}
-            </Select>
-          </Form.Item>
-          <Form.Item label="Salary Increase" name="salaryincrease" rules={[{ required: true }]}>
-            <InputNumber
-              style={{ width: '100%' }}
-              formatter={value => `LKR ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
-              parser={value => value.replace(/LKR\s?|(,*)/g, '')}
-            />
-          </Form.Item>
-          <Form.Item label="Promotion Date" name="promotiondate" rules={[{ required: true }]}>
-            <DatePicker style={{ width: '100%' }} />
-          </Form.Item>
-        </Form>
-      </Modal>
+      {/* Recent Activities */}
+      <Col span={24}>
+        <Card 
+          title="Recent Activities" 
+          extra={
+            <Button 
+              type="link" 
+              icon={<FilterOutlined />}
+              onClick={() => setIsDateRangeModalVisible(true)}
+            >
+              Date Range
+            </Button>
+          }
+        >
+          <List
+            dataSource={recentActivities}
+            renderItem={(item) => (
+              <List.Item>
+                <List.Item.Meta
+                  avatar={<Avatar icon={<AuditOutlined />} />}
+                  title={item.action}
+                  description={
+                    <Space direction="vertical" size={0}>
+                      <div>Table: {item.table_name}</div>
+                      <div>Time: {dayjs(item.created_at).format('MMM D, YYYY HH:mm')}</div>
+                      <div style={{ fontSize: '12px', color: '#999' }}>
+                        IP: {item.ip_address}
+                      </div>
+                    </Space>
+                  }
+                />
+              </List.Item>
+            )}
+          />
+        </Card>
+      </Col>
+    </Row>
+  );
 
-      {/* Add Bonus Modal */}
-      <Modal
-        title="Add Bonus"
-        open={isBonusModalVisible}
-        onCancel={() => setIsBonusModalVisible(false)}
-        onOk={() => bonusForm.submit()}
-        okText="Add Bonus"
-        width={500}
-      >
-        <Form layout="vertical" form={bonusForm} onFinish={handleAddBonus}>
-          <Form.Item label="Select Employee" name="empid" rules={[{ required: true }]}>
-            <Select placeholder="Choose employee">
-              {allEmployees.map(emp => (
-                <Option key={emp.empid} value={emp.empid}>
-                  {emp.first_name} {emp.last_name}
-                </Option>
-              ))}
-            </Select>
-          </Form.Item>
-          <Form.Item label="Bonus Type" name="type" rules={[{ required: true }]}>
-            <Select>
-              <Option value="Performance">Performance Bonus</Option>
-              <Option value="Festival">Festival Bonus</Option>
-              <Option value="Annual">Annual Bonus</Option>
-              <Option value="Special">Special Bonus</Option>
-            </Select>
-          </Form.Item>
-          <Form.Item label="Amount" name="amount" rules={[{ required: true }]}>
-            <InputNumber
-              style={{ width: '100%' }}
-              formatter={value => `LKR ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
-              parser={value => value.replace(/LKR\s?|(,*)/g, '')}
-            />
-          </Form.Item>
-          <Form.Item label="Reason" name="reason" rules={[{ required: true }]}>
-            <TextArea rows={3} />
-          </Form.Item>
-          <Form.Item label="Bonus Date" name="bonusdate" rules={[{ required: true }]}>
-            <DatePicker style={{ width: '100%' }} />
-          </Form.Item>
-        </Form>
-      </Modal>
+  const renderEmployeeManagement = () => (
+    <Card
+      title="Employee Management"
+      extra={
+        <Space>
+          <Button 
+            type="primary" 
+            icon={<PlusOutlined />}
+            onClick={() => setIsAddUserModalVisible(true)}
+          >
+            Add Employee
+          </Button>
+          <Button 
+            icon={<FileExcelOutlined />}
+            onClick={() => generateReport('staff')}
+          >
+            Export Staff
+          </Button>
+        </Space>
+      }
+    >
+      <Table
+        columns={employeeColumns}
+        dataSource={allEmployees}
+        rowKey="empid"
+        pagination={{ pageSize: 10 }}
+        scroll={{ x: 800 }}
+      />
+    </Card>
+  );
 
-      {/* Process Increment Modal */}
-      <Modal
-        title="Process Increment"
-        open={isIncrementModalVisible}
-        onCancel={() => setIsIncrementModalVisible(false)}
-        onOk={() => incrementForm.submit()}
-        okText="Process Increment"
-        width={500}
-      >
-        <Form layout="vertical" form={incrementForm} onFinish={handleProcessIncrement}>
-          <Form.Item label="Select Employee" name="empid" rules={[{ required: true }]}>
-            <Select placeholder="Choose employee">
-              {allEmployees.map(emp => (
-                <Option key={emp.empid} value={emp.empid}>
-                  {emp.first_name} {emp.last_name}
-                </Option>
-              ))}
-            </Select>
-          </Form.Item>
-          <Form.Item label="Increment Percentage" name="percentage" rules={[{ required: true }]}>
-            <InputNumber
-              style={{ width: '100%' }}
-              min={1}
-              max={100}
-              formatter={value => `${value}%`}
-              parser={value => value.replace('%', '')}
-            />
-          </Form.Item>
-          <Form.Item label="Increment Amount" name="amount" rules={[{ required: true }]}>
-            <InputNumber
-              style={{ width: '100%' }}
-              formatter={value => `LKR ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
-              parser={value => value.replace(/LKR\s?|(,*)/g, '')}
-            />
-          </Form.Item>
-          <Form.Item label="Last Increment Date" name="lastincrementdate" rules={[{ required: true }]}>
-            <DatePicker style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item label="Next Increment Date" name="nextincrementdate" rules={[{ required: true }]}>
-            <DatePicker style={{ width: '100%' }} />
-          </Form.Item>
-        </Form>
-      </Modal>
+  const renderLeaveManagement = () => (
+    <Card
+      title="Leave Management"
+      extra={
+        <Space>
+          <Button 
+            type="primary" 
+            icon={<PlusOutlined />}
+            onClick={() => setIsLeaveModalVisible(true)}
+          >
+            Apply Leave
+          </Button>
+          <Button 
+            icon={<FileExcelOutlined />}
+            onClick={() => generateReport('leave')}
+          >
+            Export Report
+          </Button>
+        </Space>
+      }
+    >
+      <Table
+        columns={leaveColumns}
+        dataSource={leaveRequests}
+        rowKey="leaveid"
+        pagination={{ pageSize: 10 }}
+        scroll={{ x: 800 }}
+      />
+    </Card>
+  );
 
-      {/* Assign Task Modal */}
-      <Modal
-        title="Assign Task"
-        open={isTaskModalVisible}
-        onCancel={() => setIsTaskModalVisible(false)}
-        onOk={() => taskForm.submit()}
-        okText="Assign Task"
-        width={500}
-      >
-        <Form layout="vertical" form={taskForm} onFinish={handleAssignTask}>
-          <Form.Item label="Select Employee" name="empid" rules={[{ required: true }]}>
-            <Select placeholder="Choose employee">
-              {allEmployees.map(emp => (
-                <Option key={emp.empid} value={emp.empid}>
-                  {emp.first_name} {emp.last_name}
-                </Option>
-              ))}
-            </Select>
-          </Form.Item>
-          <Form.Item label="Task Title" name="title" rules={[{ required: true }]}>
-            <Input />
-          </Form.Item>
-          <Form.Item label="Description" name="description">
-            <TextArea rows={3} />
-          </Form.Item>
-          <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item label="Priority" name="priority" rules={[{ required: true }]}>
-                <Select>
-                  <Option value="Low">Low</Option>
-                  <Option value="Medium">Medium</Option>
-                  <Option value="High">High</Option>
-                  <Option value="Urgent">Urgent</Option>
-                </Select>
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item label="Type" name="type" rules={[{ required: true }]}>
-                <Select>
-                  <Option value="Development">Development</Option>
-                  <Option value="Testing">Testing</Option>
-                  <Option value="Design">Design</Option>
-                  <Option value="Documentation">Documentation</Option>
-                  <Option value="Meeting">Meeting</Option>
-                </Select>
-              </Form.Item>
-            </Col>
-          </Row>
-          <Form.Item label="Due Date" name="due_date" rules={[{ required: true }]}>
-            <DatePicker style={{ width: '100%' }} />
-          </Form.Item>
-        </Form>
-      </Modal>
+  const renderLoanManagement = () => (
+    <Card
+      title="Loan Management"
+      extra={
+        <Space>
+          <Button 
+            type="primary" 
+            icon={<PlusOutlined />}
+            onClick={() => setIsLoanModalVisible(true)}
+          >
+            Process Loan
+          </Button>
+          <Button 
+            icon={<FileExcelOutlined />}
+            onClick={() => generateReport('financial')}
+          >
+            Export Report
+          </Button>
+        </Space>
+      }
+    >
+      <Table
+        columns={loanColumns}
+        dataSource={loanRequests}
+        rowKey="loanrequestid"
+        pagination={{ pageSize: 10 }}
+        scroll={{ x: 800 }}
+      />
+    </Card>
+  );
 
-      {/* Schedule Meeting Modal */}
-      <Modal
-        title="Schedule Meeting"
-        open={isMeetingModalVisible}
-        onCancel={() => setIsMeetingModalVisible(false)}
-        onOk={() => meetingForm.submit()}
-        okText="Schedule Meeting"
-        width={500}
-      >
-        <Form layout="vertical" form={meetingForm} onFinish={handleScheduleMeeting}>
-          <Form.Item label="Select Employee" name="empid" rules={[{ required: true }]}>
-            <Select placeholder="Choose employee">
-              {allEmployees.map(emp => (
-                <Option key={emp.empid} value={emp.empid}>
-                  {emp.first_name} {emp.last_name}
-                </Option>
-              ))}
-            </Select>
-          </Form.Item>
-          <Form.Item label="Meeting Topic" name="topic" rules={[{ required: true }]}>
-            <Input />
-          </Form.Item>
-          <Form.Item label="Description" name="description">
-            <TextArea rows={3} />
-          </Form.Item>
-          <Form.Item label="Date" name="date" rules={[{ required: true }]}>
-            <DatePicker style={{ width: '100%' }} />
-          </Form.Item>
-          <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item label="Start Time" name="starttime" rules={[{ required: true }]}>
-                <TimePicker style={{ width: '100%' }} format="HH:mm" />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item label="End Time" name="endtime" rules={[{ required: true }]}>
-                <TimePicker style={{ width: '100%' }} format="HH:mm" />
-              </Form.Item>
-            </Col>
-          </Row>
-          <Form.Item label="Location" name="location">
-            <Input />
-          </Form.Item>
-          <Form.Item label="Meeting Type" name="type">
-            <Select>
-              <Option value="Team">Team Meeting</Option>
-              <Option value="One-on-One">One-on-One</Option>
-              <Option value="Client">Client Meeting</Option>
-              <Option value="Training">Training Session</Option>
-            </Select>
-          </Form.Item>
-        </Form>
-      </Modal>
+  const renderAttendanceManagement = () => (
+    <Card
+      title="Attendance Management"
+      extra={
+        <Space>
+          <Button 
+            type="primary" 
+            icon={<PlusOutlined />}
+            onClick={() => setIsAttendanceModalVisible(true)}
+          >
+            Mark Attendance
+          </Button>
+          <Button 
+            icon={<FileExcelOutlined />}
+            onClick={() => generateReport('attendance')}
+          >
+            Export Report
+          </Button>
+        </Space>
+      }
+    >
+      <Table
+        columns={[
+          {
+            title: 'Employee',
+            dataIndex: ['employee', 'full_name'],
+            key: 'employee_name',
+          },
+          {
+            title: 'Date',
+            dataIndex: 'date',
+            key: 'date',
+            render: (date) => dayjs(date).format('MMM D, YYYY'),
+          },
+          {
+            title: 'In Time',
+            dataIndex: 'intime',
+            key: 'intime',
+          },
+          {
+            title: 'Out Time',
+            dataIndex: 'outtime',
+            key: 'outtime',
+          },
+          {
+            title: 'Status',
+            dataIndex: 'status',
+            key: 'status',
+            render: (status) => <Tag color={status === 'Present' ? 'green' : 'red'}>{status}</Tag>,
+          },
+        ]}
+        dataSource={attendanceData}
+        rowKey="attendanceid"
+        pagination={{ pageSize: 10 }}
+        scroll={{ x: 800 }}
+      />
+    </Card>
+  );
 
-      {/* Give Feedback Modal */}
-      <Modal
-        title="Give Performance Feedback"
-        open={isFeedbackModalVisible}
-        onCancel={() => setIsFeedbackModalVisible(false)}
-        onOk={() => feedbackForm.submit()}
-        okText="Submit Feedback"
-        width={500}
-      >
-        <Form layout="vertical" form={feedbackForm} onFinish={handleSubmitFeedback}>
-          <Form.Item label="Select Employee" name="empid" rules={[{ required: true }]}>
-            <Select placeholder="Choose employee">
-              {allEmployees.map(emp => (
-                <Option key={emp.empid} value={emp.empid}>
-                  {emp.first_name} {emp.last_name}
-                </Option>
-              ))}
-            </Select>
-          </Form.Item>
-          <Form.Item label="Rating" name="rating" rules={[{ required: true }]}>
-            <Rate />
-          </Form.Item>
-          <Form.Item label="Comments" name="comments">
-            <TextArea rows={4} placeholder="Provide detailed feedback..." />
-          </Form.Item>
-        </Form>
-      </Modal>
+  const renderSalaryManagement = () => (
+    <Card
+      title="Salary Management"
+      extra={
+        <Space>
+          <Button 
+            type="primary" 
+            icon={<PlusOutlined />}
+            onClick={() => setIsSalaryModalVisible(true)}
+          >
+            Process Salary
+          </Button>
+          <Button 
+            icon={<FileExcelOutlined />}
+            onClick={() => generateReport('salary')}
+          >
+            Export Report
+          </Button>
+        </Space>
+      }
+    >
+      <Table
+        columns={[
+          {
+            title: 'Employee',
+            dataIndex: ['employee', 'full_name'],
+            key: 'employee_name',
+          },
+          {
+            title: 'Basic Salary',
+            dataIndex: 'basicsalary',
+            key: 'basicsalary',
+            render: (salary) => `LKR ${salary?.toLocaleString() || '0'}`,
+          },
+          {
+            title: 'OT Pay',
+            dataIndex: 'otpay',
+            key: 'otpay',
+            render: (pay) => `LKR ${pay?.toLocaleString() || '0'}`,
+          },
+          {
+            title: 'Bonus Pay',
+            dataIndex: 'bonuspay',
+            key: 'bonuspay',
+            render: (pay) => `LKR ${pay?.toLocaleString() || '0'}`,
+          },
+          {
+            title: 'Total Salary',
+            dataIndex: 'totalsalary',
+            key: 'totalsalary',
+            render: (salary) => `LKR ${salary?.toLocaleString() || '0'}`,
+          },
+          {
+            title: 'Salary Date',
+            dataIndex: 'salarydate',
+            key: 'salarydate',
+            render: (date) => dayjs(date).format('MMM D, YYYY'),
+          },
+        ]}
+        dataSource={salaryData}
+        rowKey="salaryid"
+        pagination={{ pageSize: 10 }}
+        scroll={{ x: 800 }}
+      />
+    </Card>
+  );
 
-      {/* Employee Detail Drawer */}
-      <Drawer
-        title="Employee Details"
-        placement="right"
-        width={600}
-        onClose={() => setIsEmployeeDetailVisible(false)}
-        open={isEmployeeDetailVisible}
-      >
-        {selectedEmployeeDetail && (
-          <Descriptions column={1} bordered>
-            <Descriptions.Item label="Name">
-              {selectedEmployeeDetail.first_name} {selectedEmployeeDetail.last_name}
-            </Descriptions.Item>
-            <Descriptions.Item label="Email">
-              {selectedEmployeeDetail.email}
-            </Descriptions.Item>
-            <Descriptions.Item label="Phone">
-              {selectedEmployeeDetail.phone}
-            </Descriptions.Item>
-            <Descriptions.Item label="Department">
-              {selectedEmployeeDetail.department}
-            </Descriptions.Item>
-            <Descriptions.Item label="Role">
-              {selectedEmployeeDetail.role}
-            </Descriptions.Item>
-            <Descriptions.Item label="Status">
-              <Tag color={selectedEmployeeDetail.status === 'Active' ? 'green' : 'red'}>
-                {selectedEmployeeDetail.status}
-              </Tag>
-            </Descriptions.Item>
-            <Descriptions.Item label="Gender">
-              {selectedEmployeeDetail.gender}
-            </Descriptions.Item>
-            <Descriptions.Item label="Address">
-              {selectedEmployeeDetail.empaddress}
-            </Descriptions.Item>
-            <Descriptions.Item label="Leave Balances">
-              <div>Sick Leave: {selectedEmployeeDetail.sickleavebalance} days</div>
-              <div>Full Day Leave: {selectedEmployeeDetail.fulldayleavebalance} days</div>
-              <div>Half Day Leave: {selectedEmployeeDetail.halfdayleavebalance} days</div>
-              <div>Short Leave: {selectedEmployeeDetail.shortleavebalance} days</div>
-              <div>Maternity Leave: {selectedEmployeeDetail.maternityleavebalance} days</div>
-            </Descriptions.Item>
-          </Descriptions>
-        )}
-      </Drawer>
+  // Modal forms
+  const renderAddUserModal = () => (
+    <Modal
+      title="Add New Employee"
+      open={isAddUserModalVisible}
+      onCancel={() => {
+        setIsAddUserModalVisible(false);
+        userForm.resetFields();
+      }}
+      onOk={() => userForm.submit()}
+      width={700}
+    >
+      <Form form={userForm} layout="vertical" onFinish={handleAddUser}>
+        <Row gutter={16}>
+          <Col span={12}>
+            <Form.Item
+              name="first_name"
+              label="First Name"
+              rules={[{ required: true, message: 'Please enter first name' }]}
+            >
+              <Input placeholder="Enter first name" />
+            </Form.Item>
+          </Col>
+          <Col span={12}>
+            <Form.Item
+              name="last_name"
+              label="Last Name"
+              rules={[{ required: true, message: 'Please enter last name' }]}
+            >
+              <Input placeholder="Enter last name" />
+            </Form.Item>
+          </Col>
+        </Row>
+        
+        <Row gutter={16}>
+          <Col span={12}>
+            <Form.Item
+              name="email"
+              label="Email"
+              rules={[
+                { required: true, message: 'Please enter email' },
+                { type: 'email', message: 'Please enter valid email' }
+              ]}
+            >
+              <Input placeholder="Enter email" />
+            </Form.Item>
+          </Col>
+          <Col span={12}>
+            <Form.Item
+              name="phone"
+              label="Phone"
+              rules={[{ required: true, message: 'Please enter phone number' }]}
+            >
+              <Input placeholder="Enter phone number" />
+            </Form.Item>
+          </Col>
+        </Row>
+
+        <Row gutter={16}>
+          <Col span={12}>
+            <Form.Item
+              name="role"
+              label="Role"
+              rules={[{ required: true, message: 'Please select role' }]}
+            >
+              <Select placeholder="Select role">
+                <Option value="employee">Employee</Option>
+                <Option value="manager">Manager</Option>
+                <Option value="admin">Admin</Option>
+                <Option value="hr">HR</Option>
+              </Select>
+            </Form.Item>
+          </Col>
+          <Col span={12}>
+            <Form.Item
+              name="department"
+              label="Department"
+              rules={[{ required: true, message: 'Please select department' }]}
+            >
+              <Select placeholder="Select department">
+                {departments.map(dept => (
+                  <Option key={dept.departmentid} value={dept.departmentname}>
+                    {dept.departmentname}
+                  </Option>
+                ))}
+              </Select>
+            </Form.Item>
+          </Col>
+        </Row>
+
+        <Row gutter={16}>
+          <Col span={12}>
+            <Form.Item
+              name="gender"
+              label="Gender"
+              rules={[{ required: true, message: 'Please select gender' }]}
+            >
+              <Select placeholder="Select gender">
+                <Option value="Male">Male</Option>
+                <Option value="Female">Female</Option>
+                <Option value="Other">Other</Option>
+              </Select>
+            </Form.Item>
+          </Col>
+          <Col span={12}>
+            <Form.Item
+              name="basicsalary"
+              label="Basic Salary"
+              rules={[{ required: true, message: 'Please enter basic salary' }]}
+            >
+              <InputNumber
+                style={{ width: '100%' }}
+                placeholder="Enter basic salary"
+                min={0}
+                formatter={value => `LKR ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+                parser={value => value.replace(/LKR\s?|(,*)/g, '')}
+              />
+            </Form.Item>
+          </Col>
+        </Row>
+
+        <Form.Item
+          name="address"
+          label="Address"
+          rules={[{ required: true, message: 'Please enter address' }]}
+        >
+          <TextArea placeholder="Enter address" rows={3} />
+        </Form.Item>
+      </Form>
+    </Modal>
+  );
+
+  const renderEditUserModal = () => (
+    <Modal
+      title="Edit Employee"
+      open={isEditUserModalVisible}
+      onCancel={() => {
+        setIsEditUserModalVisible(false);
+        setSelectedEmployee(null);
+        editUserForm.resetFields();
+      }}
+      onOk={() => editUserForm.submit()}
+      width={700}
+    >
+      <Form form={editUserForm} layout="vertical" onFinish={handleEditUser}>
+        <Row gutter={16}>
+          <Col span={12}>
+            <Form.Item
+              name="first_name"
+              label="First Name"
+              rules={[{ required: true, message: 'Please enter first name' }]}
+            >
+              <Input placeholder="Enter first name" />
+            </Form.Item>
+          </Col>
+          <Col span={12}>
+            <Form.Item
+              name="last_name"
+              label="Last Name"
+              rules={[{ required: true, message: 'Please enter last name' }]}
+            >
+              <Input placeholder="Enter last name" />
+            </Form.Item>
+          </Col>
+        </Row>
+        
+        <Row gutter={16}>
+          <Col span={12}>
+            <Form.Item
+              name="email"
+              label="Email"
+              rules={[
+                { required: true, message: 'Please enter email' },
+                { type: 'email', message: 'Please enter valid email' }
+              ]}
+            >
+              <Input placeholder="Enter email" />
+            </Form.Item>
+          </Col>
+          <Col span={12}>
+            <Form.Item
+              name="phone"
+              label="Phone"
+              rules={[{ required: true, message: 'Please enter phone number' }]}
+            >
+              <Input placeholder="Enter phone number" />
+            </Form.Item>
+          </Col>
+        </Row>
+
+        <Row gutter={16}>
+          <Col span={12}>
+            <Form.Item
+              name="role"
+              label="Role"
+              rules={[{ required: true, message: 'Please select role' }]}
+            >
+              <Select placeholder="Select role">
+                <Option value="employee">Employee</Option>
+                <Option value="manager">Manager</Option>
+                <Option value="admin">Admin</Option>
+                <Option value="hr">HR</Option>
+              </Select>
+            </Form.Item>
+          </Col>
+          <Col span={12}>
+            <Form.Item
+              name="department"
+              label="Department"
+              rules={[{ required: true, message: 'Please select department' }]}
+            >
+              <Select placeholder="Select department">
+                {departments.map(dept => (
+                  <Option key={dept.departmentid} value={dept.departmentname}>
+                    {dept.departmentname}
+                  </Option>
+                ))}
+              </Select>
+            </Form.Item>
+          </Col>
+        </Row>
+
+        <Row gutter={16}>
+          <Col span={12}>
+            <Form.Item
+              name="gender"
+              label="Gender"
+              rules={[{ required: true, message: 'Please select gender' }]}
+            >
+              <Select placeholder="Select gender">
+                <Option value="Male">Male</Option>
+                <Option value="Female">Female</Option>
+                <Option value="Other">Other</Option>
+              </Select>
+            </Form.Item>
+          </Col>
+          <Col span={12}>
+            <Form.Item
+              name="basicsalary"
+              label="Basic Salary"
+              rules={[{ required: true, message: 'Please enter basic salary' }]}
+            >
+              <InputNumber
+                style={{ width: '100%' }}
+                placeholder="Enter basic salary"
+                min={0}
+                formatter={value => `LKR ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+                parser={value => value.replace(/LKR\s?|(,*)/g, '')}
+              />
+            </Form.Item>
+          </Col>
+        </Row>
+
+        <Row gutter={16}>
+          <Col span={12}>
+            <Form.Item
+              name="status"
+              label="Status"
+              rules={[{ required: true, message: 'Please select status' }]}
+            >
+              <Select placeholder="Select status">
+                <Option value="Active">Active</Option>
+                <Option value="Inactive">Inactive</Option>
+              </Select>
+            </Form.Item>
+          </Col>
+          <Col span={12}>
+            <Form.Item
+              name="is_active"
+              label="Active Status"
+              valuePropName="checked"
+            >
+              <Switch checkedChildren="Active" unCheckedChildren="Inactive" />
+            </Form.Item>
+          </Col>
+        </Row>
+
+        <Form.Item
+          name="address"
+          label="Address"
+          rules={[{ required: true, message: 'Please enter address' }]}
+        >
+          <TextArea placeholder="Enter address" rows={3} />
+        </Form.Item>
+      </Form>
+    </Modal>
+  );
+
+  const renderLeaveModal = () => (
+    <Modal
+      title="Apply Leave"
+      open={isLeaveModalVisible}
+      onCancel={() => {
+        setIsLeaveModalVisible(false);
+        leaveForm.resetFields();
+      }}
+      onOk={() => leaveForm.submit()}
+      width={600}
+    >
+      <Form form={leaveForm} layout="vertical" onFinish={handleApplyLeaveForUser}>
+        <Form.Item
+          name="empid"
+          label="Employee"
+          rules={[{ required: true, message: 'Please select employee' }]}
+        >
+          <Select placeholder="Select employee" showSearch optionFilterProp="children">
+            {allEmployees.filter(emp => emp.is_active).map(emp => (
+              <Option key={emp.empid} value={emp.empid}>
+                {emp.full_name} - {emp.department}
+              </Option>
+            ))}
+          </Select>
+        </Form.Item>
+
+        <Form.Item
+          name="leavetypeid"
+          label="Leave Type"
+          rules={[{ required: true, message: 'Please select leave type' }]}
+        >
+          <Select placeholder="Select leave type">
+            {leaveTypes.map(type => (
+              <Option key={type.leavetypeid} value={type.leavetypeid}>
+                {type.leavetype} (Max: {type.max_days} days)
+              </Option>
+            ))}
+          </Select>
+        </Form.Item>
+
+        <Row gutter={16}>
+          <Col span={12}>
+            <Form.Item
+              name="leavefromdate"
+              label="From Date"
+              rules={[{ required: true, message: 'Please select from date' }]}
+            >
+              <DatePicker style={{ width: '100%' }} />
+            </Form.Item>
+          </Col>
+          <Col span={12}>
+            <Form.Item
+              name="leavetodate"
+              label="To Date"
+              rules={[{ required: true, message: 'Please select to date' }]}
+            >
+              <DatePicker style={{ width: '100%' }} />
+            </Form.Item>
+          </Col>
+        </Row>
+
+        <Form.Item
+          name="leavereason"
+          label="Reason"
+          rules={[{ required: true, message: 'Please enter reason' }]}
+        >
+          <TextArea placeholder="Enter leave reason" rows={3} />
+        </Form.Item>
+      </Form>
+    </Modal>
+  );
+
+  const renderDateRangeModal = () => (
+    <Modal
+      title="Select Date Range"
+      open={isDateRangeModalVisible}
+      onCancel={() => {
+        setIsDateRangeModalVisible(false);
+        dateRangeForm.resetFields();
+      }}
+      onOk={() => dateRangeForm.submit()}
+    >
+      <Form form={dateRangeForm} layout="vertical" onFinish={handleUpdateDateRange}>
+        <Form.Item
+          name="dateRange"
+          label="Date Range"
+          rules={[{ required: true, message: 'Please select date range' }]}
+          initialValue={dateRange}
+        >
+          <RangePicker style={{ width: '100%' }} />
+        </Form.Item>
+      </Form>
+    </Modal>
+  );
+
+  const renderEmployeeDetailDrawer = () => (
+    <Drawer
+      title="Employee Details"
+      placement="right"
+      width={600}
+      onClose={() => {
+        setIsEmployeeDetailVisible(false);
+        setSelectedEmployeeDetail(null);
+      }}
+      open={isEmployeeDetailVisible}
+    >
+      {selectedEmployeeDetail && (
+        <Descriptions column={1} bordered>
+          <Descriptions.Item label="Full Name">
+            {selectedEmployeeDetail.full_name}
+          </Descriptions.Item>
+          <Descriptions.Item label="Email">
+            {selectedEmployeeDetail.email}
+          </Descriptions.Item>
+          <Descriptions.Item label="Phone">
+            {selectedEmployeeDetail.phone}
+          </Descriptions.Item>
+          <Descriptions.Item label="Role">
+            <Tag color="blue">{selectedEmployeeDetail.role}</Tag>
+          </Descriptions.Item>
+          <Descriptions.Item label="Department">
+            {selectedEmployeeDetail.department}
+          </Descriptions.Item>
+          <Descriptions.Item label="Gender">
+            {selectedEmployeeDetail.gender}
+          </Descriptions.Item>
+          <Descriptions.Item label="Status">
+            <Tag color={selectedEmployeeDetail.status === 'Active' ? 'green' : 'red'}>
+              {selectedEmployeeDetail.status}
+            </Tag>
+          </Descriptions.Item>
+          <Descriptions.Item label="Basic Salary">
+            LKR {selectedEmployeeDetail.basicsalary?.toLocaleString() || '0'}
+          </Descriptions.Item>
+          <Descriptions.Item label="Address">
+            {selectedEmployeeDetail.empaddress}
+          </Descriptions.Item>
+          <Descriptions.Item label="Join Date">
+            {dayjs(selectedEmployeeDetail.created_at).format('MMM D, YYYY')}
+          </Descriptions.Item>
+        </Descriptions>
+      )}
+    </Drawer>
+  );
+
+  return (
+    <div style={{ padding: '24px' }}>
+      <div style={{ marginBottom: '24px' }}>
+        <h1 style={{ margin: 0, fontSize: '28px', fontWeight: 'bold' }}>
+          Admin Dashboard
+        </h1>
+        <p style={{ margin: 0, color: '#666' }}>
+          Welcome back! Manage your HR system efficiently.
+        </p>
+      </div>
+
+      <Card>
+        <Tabs
+          activeKey={activeTab}
+          onChange={setActiveTab}
+          items={[
+            {
+              key: 'overview',
+              label: (
+                <span>
+                  <BarChartOutlined />
+                  Overview
+                </span>
+              ),
+              children: renderOverview(),
+            },
+            {
+              key: 'employees',
+              label: (
+                <span>
+                  <TeamOutlined />
+                  Employee Management
+                </span>
+              ),
+              children: renderEmployeeManagement(),
+            },
+            {
+              key: 'leave',
+              label: (
+                <span>
+                  <CalendarOutlined />
+                  Leave Management
+                </span>
+              ),
+              children: renderLeaveManagement(),
+            },
+            {
+              key: 'loans',
+              label: (
+                <span>
+                  <DollarOutlined />
+                  Loan Management
+                </span>
+              ),
+              children: renderLoanManagement(),
+            },
+            {
+              key: 'attendance',
+              label: (
+                <span>
+                  <ClockCircleOutlined />
+                  Attendance
+                </span>
+              ),
+              children: renderAttendanceManagement(),
+            },
+            {
+              key: 'salary',
+              label: (
+                <span>
+                  <MoneyCollectOutlined />
+                  Salary Management
+                </span>
+              ),
+              children: renderSalaryManagement(),
+            },
+          ]}
+        />
+      </Card>
+
+      {/* Modals */}
+      {renderAddUserModal()}
+      {renderEditUserModal()}
+      {renderLeaveModal()}
+      {renderDateRangeModal()}
+      {renderEmployeeDetailDrawer()}
     </div>
   );
 };

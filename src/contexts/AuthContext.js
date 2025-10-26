@@ -1,4 +1,3 @@
-// src/contexts/AuthContext.js
 import React, { createContext, useState, useContext, useEffect } from 'react';
 import { supabase } from '../services/supabase';
 import { message } from 'antd';
