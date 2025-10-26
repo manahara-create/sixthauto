@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Form, Input, Button, Card, message, Typography, Select, Divider, Image, Alert, Space } from 'antd';
+import { supabase } from '../../services/supabase';
+import { Form, Input, Button, Select, message, Card, Typography, Divider, Alert, Space, Image } from 'antd';
 import { 
   UserOutlined, 
   LockOutlined, 
@@ -7,273 +8,96 @@ import {
   SafetyOutlined, 
   IdcardOutlined, 
   InfoCircleOutlined,
-  TeamOutlined 
+  TeamOutlined
 } from '@ant-design/icons';
-import { supabase } from '../../services/supabase';
-import { useNavigate, Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 
-const { Title, Text } = Typography;
 const { Option } = Select;
+const { Title, Text } = Typography;
+
+// Define available roles (excluding Admin)
+const availableRoles = [
+  { value: 'Manager', label: 'Manager' },
+  { value: 'Employee', label: 'Employee' },
+  { value: 'CEO', label: 'CEO' },
+  { value: 'Accountant', label: 'Accountant' },
+  { value: 'HR', label: 'HR' }
+];
 
 const Register = () => {
   const [loading, setLoading] = useState(false);
   const [form] = Form.useForm();
   const navigate = useNavigate();
 
-  // Available roles (Admin removed - must be created manually)
-  const availableRoles = [
-    { value: 'employee', label: 'Employee' },
-    { value: 'manager', label: 'Manager' },
-    { value: 'hr', label: 'HR' },
-    { value: 'ceo', label: 'CEO' },
-    { value: 'accountant', label: 'Accountant' },
-  ];
+  const handleRegister = async (values) => {
+    const { full_name, email, password, confirmPassword, role } = values;
 
-  // Email validation
-  const validateEmail = (email) => {
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    return emailRegex.test(email);
-  };
-
-  // Password validation
-  const validatePassword = (password) => {
-    if (password.length < 6) {
-      return 'Password must be at least 6 characters long';
+    if (password !== confirmPassword) {
+      message.error("Passwords do not match!");
+      return;
     }
-    
-    // Check for common weak passwords
-    const weakPasswords = ['password', '123456', 'qwerty', 'letmein'];
-    if (weakPasswords.includes(password.toLowerCase())) {
-      return 'This password is too common. Please choose a stronger one.';
-    }
-    
-    return null;
-  };
 
-  // Check if email already exists
-  const checkEmailExists = async (email) => {
-    try {
-      // Check in auth users
-      const { data: authData } = await supabase
-        .from('employee')
-        .select('email')
-        .eq('email', email.toLowerCase())
-        .single();
-
-      return !!authData;
-    } catch (error) {
-      console.error('Error checking email:', error);
-      return false;
-    }
-  };
-
-  // Create initial employee records
-  const createInitialEmployeeRecords = async (userId, role, email, fullName) => {
-    try {
-      // Split full name
-      const nameParts = fullName.trim().split(' ');
-      const first_name = nameParts[0] || '';
-      const last_name = nameParts.slice(1).join(' ') || '';
-
-      // Create employee profile
-      const employeeData = {
-        email: email.toLowerCase(),
-        first_name: first_name,
-        last_name: last_name,
-        role: role,
-        status: 'active',
-        auth_user_id: userId,
-        department: 'AUTOMOTIVE', // Default department
-        is_active: true,
-        satisfaction_score: 0,
-        // Initialize default leave balances
-        sickleavebalance: 14,
-        fulldayleavebalance: 21,
-        halfdayleavebalance: 5,
-        shortleavebalance: 7,
-        maternityleavebalance: 0,
-        created_at: new Date().toISOString()
-      };
-
-      const { data: employee, error: employeeError } = await supabase
-        .from('employee')
-        .insert([employeeData])
-        .select()
-        .single();
-
-      if (employeeError) {
-        // If employee already exists (unique constraint violation), update it
-        if (employeeError.code === '23505') {
-          const { error: updateError } = await supabase
-            .from('employee')
-            .update({
-              first_name: first_name,
-              last_name: last_name,
-              role: role,
-              status: 'active',
-              auth_user_id: userId,
-              is_active: true,
-              updated_at: new Date().toISOString()
-            })
-            .eq('email', email.toLowerCase());
-
-          if (updateError) throw updateError;
-        } else {
-          throw employeeError;
-        }
-      }
-
-      // Create initial leave balances
-      await createLeaveBalances(employee?.empid || userId);
-
-      // Create audit log
-      await createAuditLog(employee?.empid || userId, 'USER_REGISTRATION', { role, status: 'active' });
-
-      message.success('Employee profile created successfully');
-      return employee;
-
-    } catch (error) {
-      console.error('Error creating employee records:', error);
-      throw new Error('Failed to create employee profile');
-    }
-  };
-
-  // Create leave balances
-  const createLeaveBalances = async (employeeId) => {
-    try {
-      const { data: leaveTypes } = await supabase
-        .from('leavetype')
-        .select('leavetypeid, leavetype');
-
-      if (leaveTypes) {
-        const currentYear = new Date().getFullYear();
-        const leaveBalanceData = leaveTypes.map(leaveType => ({
-          empid: employeeId,
-          leavetypeid: leaveType.leavetypeid,
-          year: currentYear,
-          days: getDefaultLeaveDays(leaveType.leavetype),
-          created_at: new Date().toISOString()
-        }));
-        
-        await supabase.from('leavebalance').insert(leaveBalanceData);
-      }
-    } catch (error) {
-      console.warn('Leave balance creation warning:', error);
-    }
-  };
-
-  // Get default leave days
-  const getDefaultLeaveDays = (leaveType) => {
-    const defaults = {
-      'sick': 14,
-      'annual': 21,
-      'half-day': 5,
-      'maternity': 84,
-      'short': 7
-    };
-    return defaults[leaveType?.toLowerCase()] || 0;
-  };
-
-  // Create audit log
-  const createAuditLog = async (userId, action, newValues) => {
-    try {
-      await supabase.from('audit_logs').insert({
-        user_id: userId,
-        action: action,
-        table_name: 'employee',
-        record_id: userId,
-        new_values: newValues,
-        created_at: new Date().toISOString(),
-        ip_address: await getClientIP(),
-        user_agent: navigator.userAgent
-      });
-    } catch (error) {
-      console.warn('Audit log creation warning:', error);
-    }
-  };
-
-  // Get client IP
-  const getClientIP = async () => {
-    try {
-      const response = await fetch('https://api.ipify.org?format=json');
-      const data = await response.json();
-      return data.ip;
-    } catch (error) {
-      return 'unknown';
-    }
-  };
-
-  const onFinish = async (values) => {
     setLoading(true);
-    
+
     try {
-      const { full_name, email, password, role } = values;
-
-      // Validate email format
-      if (!validateEmail(email)) {
-        message.error('Please enter a valid email address');
-        return;
-      }
-
-      // Validate password
-      const passwordError = validatePassword(password);
-      if (passwordError) {
-        message.error(passwordError);
-        return;
-      }
-
-      // Check if email already exists
-      const emailExists = await checkEmailExists(email);
-      if (emailExists) {
-        message.error('This email is already registered. Please use a different email or try logging in.');
-        return;
-      }
-
-      // Register user with Supabase Auth
+      // 1️⃣ Sign up user in Supabase Auth
       const { data: authData, error: authError } = await supabase.auth.signUp({
-        email: email.trim().toLowerCase(),
-        password: password,
-        options: {
-          data: {
-            full_name: full_name,
-            role: role
-          }
-        }
+        email,
+        password,
       });
 
-      if (authError) {
-        if (authError.message.includes('User already registered')) {
-          throw new Error('This email is already registered. Please try logging in.');
-        } else if (authError.message.includes('Email not allowed')) {
-          throw new Error('This email domain is not allowed for registration.');
-        } else {
-          throw authError;
-        }
-      }
+      if (authError) throw authError;
 
-      if (authData.user) {
-        // Create employee profile and records
-        await createInitialEmployeeRecords(authData.user.id, role, email, full_name);
+      const supabaseAuthId = authData.user.id;
 
-        message.success('Account created successfully! Please log in.', 5);
-        navigate('/login');
-      }
+      // 2️⃣ Insert into auth_users table
+      const { error: authUserError } = await supabase
+        .from('auth_users')
+        .insert([
+          {
+            email,
+            full_name: full_name,
+            role,
+            supabase_auth_id: supabaseAuthId,
+          },
+        ])
+        .select();
 
+      if (authUserError) throw authUserError;
+
+      // 3️⃣ Insert into employee table
+      const { error: employeeError } = await supabase
+        .from('employee')
+        .insert([
+          {
+            full_name: full_name,
+            email,
+            role,
+            auth_user_id: supabaseAuthId,
+          },
+        ]);
+
+      if (employeeError) throw employeeError;
+
+      message.success("Registration successful! Please verify your email.");
+      form.resetFields();
+      navigate('/login'); 
+      
     } catch (error) {
       console.error('Registration error:', error);
-      message.error(error.message || 'Registration failed. Please try again.');
+      message.error(error.message);
     } finally {
       setLoading(false);
     }
   };
 
-  const onFinishFailed = (errorInfo) => {
-    console.log('Form validation failed:', errorInfo);
-    message.warning('Please fill in all required fields correctly.');
-  };
-
   const handleReset = () => {
     form.resetFields();
+  };
+
+  const onFinishFailed = (errorInfo) => {
+    console.log('Failed:', errorInfo);
+    message.error('Please check the form for errors.');
   };
 
   return (
@@ -396,11 +220,11 @@ const Register = () => {
         <Form
           form={form}
           name="register"
-          onFinish={onFinish}
+          onFinish={handleRegister}
           onFinishFailed={onFinishFailed}
           autoComplete="off"
           layout="vertical"
-          initialValues={{ role: 'employee' }}
+          initialValues={{ role: 'Employee' }}
         >
           <Form.Item
             name="full_name"
@@ -526,8 +350,19 @@ const Register = () => {
         <Divider style={{ margin: '24px 0' }} />
         <div style={{ textAlign: 'center' }}>
           <Text style={{ fontSize: '12px', color: '#7f8c8d' }}>
-            Powered by eHealth
+            Powered by
           </Text>
+          <div style={{ margin: '8px 0' }}></div>
+          <Image
+              src="/logo.png"
+              alt="YISN"
+              preview={false}
+              style={{
+                height: '60px',
+                width: 'auto',
+                objectFit: 'contain'
+              }}
+            />
         </div>
       </Card>
     </div>
