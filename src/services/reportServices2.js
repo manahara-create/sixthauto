@@ -1,4 +1,4 @@
-import { supabase } from '../lib/supabaseClient';
+import { supabase } from '../services/supabase';
 
 class ReportService {
   // Generate Excel report

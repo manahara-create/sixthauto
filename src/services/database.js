@@ -20,7 +20,7 @@ export const DatabaseService = {
       // Check in employee table
       const { data: employee, error: employeeError } = await supabase
         .from('employee')
-        .select('empid, email, first_name, last_name, role, status')
+        .select('empid, email, full_name, role, status')
         .eq('email', normalizedEmail)
         .single();
 
@@ -115,13 +115,11 @@ export const DatabaseService = {
   async createEmployeeRecord(userData, authUserId) {
     try {
       const nameParts = userData.full_name.trim().split(' ');
-      const first_name = nameParts[0] || '';
-      const last_name = nameParts.slice(1).join(' ') || '';
+      const full_name = nameParts[0] || '';
 
       const employeeData = {
         email: userData.email.toLowerCase(),
-        first_name: first_name,
-        last_name: last_name,
+        full_name: full_name,
         role: userData.role,
         status: 'active',
         auth_user_id: authUserId,

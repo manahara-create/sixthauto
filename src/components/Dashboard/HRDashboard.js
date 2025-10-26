@@ -93,7 +93,7 @@ const HRDashboard = () => {
   const { profile } = useAuth();
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('overview');
-  
+
   // State for all features
   const [dashboardData, setDashboardData] = useState({});
   const [employees, setEmployees] = useState([]);
@@ -231,20 +231,46 @@ const HRDashboard = () => {
     try {
       const { data, error } = await supabase
         .from('employeeleave')
-        .select(`
-          *,
-          employee:empid (first_name, last_name, email, department, role),
-          leavetype:leavetype_id(leavetype)
-        `)
+        .select('*')
         .eq('leavestatus', 'pending')
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      setLeaves(data || []);
+
+      // Get employee data separately
+      const employeeIds = [...new Set(data?.map(leave => leave.empid).filter(Boolean))];
+      let employeeData = [];
+
+      if (employeeIds.length > 0) {
+        const { data: empData } = await supabase
+          .from('employee')
+          .select('empid, full_name, email, department, role')
+          .in('empid', employeeIds);
+        employeeData = empData || [];
+      }
+
+      const employeeMap = {};
+      employeeData.forEach(emp => {
+        employeeMap[emp.empid] = emp;
+      });
+
+      const leavesWithEmployee = data?.map(leave => ({
+        ...leave,
+        employee: employeeMap[leave.empid] || {
+          full_name: 'Unknown Employee',
+          email: 'N/A',
+          department: 'N/A',
+          role: 'N/A'
+        }
+      }));
+
+      setLeaves(leavesWithEmployee || []);
     } catch (error) {
       console.error('Error fetching pending leaves:', error);
+      setLeaves([]);
     }
   };
+
 
   const fetchRecruitmentStats = async () => {
     try {
@@ -261,7 +287,7 @@ const HRDashboard = () => {
       const { data: applications } = await supabase
         .from('employee')
         .select('empid')
-        .is('status', 'Applied');
+        .eq('status', 'Applied');
 
       setRecruitmentStats({
         openPositions: positions?.length || 0,
@@ -278,16 +304,35 @@ const HRDashboard = () => {
     try {
       const { data, error } = await supabase
         .from('hr_operations')
-        .select(`
-          *,
-          hr:hr_id (first_name, last_name),
-          target_employee:target_employee_id (first_name, last_name)
-        `)
+        .select('*')
         .order('operation_time', { ascending: false })
         .limit(10);
 
       if (error) throw error;
-      setRecentActivities(data || []);
+
+      // Get HR user details separately
+      const hrIds = [...new Set(data?.map(activity => activity.hr_id).filter(Boolean))];
+      let hrData = [];
+
+      if (hrIds.length > 0) {
+        const { data: hrEmpData } = await supabase
+          .from('employee')
+          .select('empid, full_name')
+          .in('empid', hrIds);
+        hrData = hrEmpData || [];
+      }
+
+      const hrMap = {};
+      hrData.forEach(hr => {
+        hrMap[hr.empid] = hr;
+      });
+
+      const activitiesWithHR = data?.map(activity => ({
+        ...activity,
+        hr: hrMap[activity.hr_id] || { full_name: 'Unknown HR' }
+      }));
+
+      setRecentActivities(activitiesWithHR || []);
     } catch (error) {
       console.error('Error fetching recent activities:', error);
     }
@@ -297,15 +342,55 @@ const HRDashboard = () => {
     try {
       const { data, error } = await supabase
         .from('training')
-        .select(`
-          *,
-          training_participants!inner (employee:empid (first_name, last_name))
-        `)
+        .select('*')
         .order('created_at', { ascending: false })
         .limit(5);
 
       if (error) throw error;
-      setTrainingData(data || []);
+
+      // Get training participants separately
+      const trainingIds = data?.map(training => training.trainingid) || [];
+      let participantsData = [];
+
+      if (trainingIds.length > 0) {
+        const { data: partData } = await supabase
+          .from('training_participants')
+          .select('*')
+          .in('trainingid', trainingIds);
+        participantsData = partData || [];
+      }
+
+      // Get employee details for participants
+      const employeeIds = [...new Set(participantsData?.map(p => p.empid).filter(Boolean))];
+      let employeeData = [];
+
+      if (employeeIds.length > 0) {
+        const { data: empData } = await supabase
+          .from('employee')
+          .select('empid, full_name')
+          .in('empid', employeeIds);
+        employeeData = empData || [];
+      }
+
+      const employeeMap = {};
+      employeeData.forEach(emp => {
+        employeeMap[emp.empid] = emp;
+      });
+
+      const trainingWithParticipants = data?.map(training => {
+        const participants = participantsData?.filter(p => p.trainingid === training.trainingid) || [];
+        const participantsWithDetails = participants.map(p => ({
+          ...p,
+          employee: employeeMap[p.empid] || { full_name: 'Unknown Employee' }
+        }));
+
+        return {
+          ...training,
+          training_participants: participantsWithDetails
+        };
+      });
+
+      setTrainingData(trainingWithParticipants || []);
     } catch (error) {
       console.error('Error fetching training data:', error);
     }
@@ -315,16 +400,52 @@ const HRDashboard = () => {
     try {
       const { data, error } = await supabase
         .from('kpi')
-        .select(`
-          *,
-          employee:empid (first_name, last_name, department),
-          kpiranking:kpiranking_id (kpirank)
-        `)
+        .select('*')
         .order('calculatedate', { ascending: false })
         .limit(10);
 
       if (error) throw error;
-      setKpiData(data || []);
+
+      // Get employee and ranking data separately
+      const employeeIds = [...new Set(data?.map(kpi => kpi.empid).filter(Boolean))];
+      const rankingIds = [...new Set(data?.map(kpi => kpi.kpirankingid).filter(Boolean))];
+
+      let employeeData = [];
+      let rankingData = [];
+
+      if (employeeIds.length > 0) {
+        const { data: empData } = await supabase
+          .from('employee')
+          .select('empid, full_name, department')
+          .in('empid', employeeIds);
+        employeeData = empData || [];
+      }
+
+      if (rankingIds.length > 0) {
+        const { data: rankData } = await supabase
+          .from('kpiranking')
+          .select('*')
+          .in('kpirankingid', rankingIds);
+        rankingData = rankData || [];
+      }
+
+      const employeeMap = {};
+      employeeData.forEach(emp => {
+        employeeMap[emp.empid] = emp;
+      });
+
+      const rankingMap = {};
+      rankingData.forEach(rank => {
+        rankingMap[rank.kpirankingid] = rank;
+      });
+
+      const kpiWithDetails = data?.map(kpi => ({
+        ...kpi,
+        employee: employeeMap[kpi.empid] || { full_name: 'Unknown Employee' },
+        kpiranking: rankingMap[kpi.kpirankingid] || { kpirank: 'Unknown' }
+      }));
+
+      setKpiData(kpiWithDetails || []);
     } catch (error) {
       console.error('Error fetching KPI data:', error);
     }
@@ -334,15 +455,35 @@ const HRDashboard = () => {
     try {
       const { data, error } = await supabase
         .from('promotion_history')
-        .select(`
-          *,
-          employee:empid (first_name, last_name)
-        `)
+        .select('*')
         .order('promotion_date', { ascending: false })
         .limit(10);
 
       if (error) throw error;
-      setPromotions(data || []);
+
+      // Get employee data separately
+      const employeeIds = [...new Set(data?.map(promo => promo.empid).filter(Boolean))];
+      let employeeData = [];
+
+      if (employeeIds.length > 0) {
+        const { data: empData } = await supabase
+          .from('employee')
+          .select('empid, full_name')
+          .in('empid', employeeIds);
+        employeeData = empData || [];
+      }
+
+      const employeeMap = {};
+      employeeData.forEach(emp => {
+        employeeMap[emp.empid] = emp;
+      });
+
+      const promotionsWithEmployee = data?.map(promo => ({
+        ...promo,
+        employee: employeeMap[promo.empid] || { full_name: 'Unknown Employee' }
+      }));
+
+      setPromotions(promotionsWithEmployee || []);
     } catch (error) {
       console.error('Error fetching promotions:', error);
     }
@@ -366,14 +507,34 @@ const HRDashboard = () => {
     try {
       const { data, error } = await supabase
         .from('position_history')
-        .select(`
-          *,
-          employee:empid (first_name, last_name)
-        `)
+        .select('*')
         .order('start_date', { ascending: false });
 
       if (error) throw error;
-      setPositionHistory(data || []);
+
+      // Get employee data separately
+      const employeeIds = [...new Set(data?.map(position => position.empid).filter(Boolean))];
+      let employeeData = [];
+
+      if (employeeIds.length > 0) {
+        const { data: empData } = await supabase
+          .from('employee')
+          .select('empid, full_name')
+          .in('empid', employeeIds);
+        employeeData = empData || [];
+      }
+
+      const employeeMap = {};
+      employeeData.forEach(emp => {
+        employeeMap[emp.empid] = emp;
+      });
+
+      const positionHistoryWithEmployee = data?.map(position => ({
+        ...position,
+        employee: employeeMap[position.empid] || { full_name: 'Unknown Employee' }
+      }));
+
+      setPositionHistory(positionHistoryWithEmployee || []);
     } catch (error) {
       console.error('Error fetching position history:', error);
     }
@@ -397,9 +558,8 @@ const HRDashboard = () => {
     let filtered = employees;
 
     if (searchTerm) {
-      filtered = filtered.filter(emp => 
-        emp.first_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        emp.last_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      filtered = filtered.filter(emp =>
+        emp.full_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         emp.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         emp.department?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         emp.role?.toLowerCase().includes(searchTerm.toLowerCase())
@@ -420,27 +580,11 @@ const HRDashboard = () => {
   // Enhanced Action handlers
   const handleAddEmployee = async (values) => {
     try {
-      // First create auth user
-      const { data: authData, error: authError } = await supabase.auth.signUp({
-        email: values.email,
-        password: values.password || 'defaultpassword123',
-        options: {
-          data: {
-            full_name: `${values.first_name} ${values.last_name}`,
-            role: values.role,
-            email_confirm: true
-          }
-        }
-      });
-
-      if (authError) throw authError;
-
-      // Then create employee record
+      // Create employee record directly (no auth user creation to match your schema)
       const { data: employeeData, error: employeeError } = await supabase
         .from('employee')
         .insert([{
-          first_name: values.first_name,
-          last_name: values.last_name,
+          full_name: values.full_name,
           email: values.email,
           role: values.role,
           department: values.department,
@@ -450,9 +594,8 @@ const HRDashboard = () => {
           empaddress: values.address,
           status: 'Active',
           is_active: true,
-          auth_user_id: authData.user?.id,
-          created_at: new Date().toISOString(),
-          basicsalary: values.basicsalary || 0
+          basicsalary: values.basicsalary || 0,
+          created_at: new Date().toISOString()
         }])
         .select();
 
@@ -470,7 +613,7 @@ const HRDashboard = () => {
         }]);
 
       await logHROperation('ADD_EMPLOYEE', employeeData[0].empid, {
-        employeeName: `${values.first_name} ${values.last_name}`,
+        employeeName: values.full_name,
         role: values.role,
         department: values.department
       });
@@ -493,8 +636,7 @@ const HRDashboard = () => {
       const { error } = await supabase
         .from('employee')
         .update({
-          first_name: values.first_name,
-          last_name: values.last_name,
+          full_name: values.full_name,
           email: values.email,
           role: values.role,
           department: values.department,
@@ -576,6 +718,13 @@ const HRDashboard = () => {
 
   const handlePromoteEmployee = async (values) => {
     try {
+      // Validate inputs
+      if (!values.empid || !values.new_role) {
+        message.error('Employee and new role');
+        message.error('Employee and new role are required');
+        return;
+      }
+
       // Update employee role
       const { error: updateError } = await supabase
         .from('employee')
@@ -610,19 +759,21 @@ const HRDashboard = () => {
         .from('promotion_history')
         .insert([{
           empid: values.empid,
-          previousrole: values.previous_role,
+          previousrole: values.previous_role || 'Unknown',
           newrole: values.new_role,
-          promotedby: profile.empid,
+          promotedby: profile?.empid,
           promotion_date: new Date().toISOString()
         }]);
 
-      if (promotionError) throw promotionError;
+      if (promotionError) {
+        console.warn('Promotion history insert failed:', promotionError);
+      }
 
       await logHROperation('PROMOTE_EMPLOYEE', values.empid, {
         previousRole: values.previous_role,
         newRole: values.new_role,
         department: values.department,
-        recommendation: values.recommendation
+        recommendation: values.recommendation || ''
       });
 
       message.success('Employee promoted successfully!');
@@ -640,17 +791,36 @@ const HRDashboard = () => {
 
   const handleAddKPI = async (values) => {
     try {
+      // Validate KPI value
+      const kpiValue = parseFloat(values.kpivalue) || 0;
+
+      if (kpiValue < 0 || kpiValue > 100) {
+        message.error('KPI value must be between 0 and 100');
+        return;
+      }
+
       // Determine KPI ranking based on value
-      let kpirankingid = 1; // Default to lowest rank
-      if (values.kpivalue >= 90) kpirankingid = 4; // Excellent
-      else if (values.kpivalue >= 80) kpirankingid = 3; // Good
-      else if (values.kpivalue >= 70) kpirankingid = 2; // Average
+      let kpirankingid = null;
+
+      // Fetch KPI rankings
+      const { data: rankings } = await supabase
+        .from('kpiranking')
+        .select('*')
+        .order('min_value', { ascending: true });
+
+      if (rankings && rankings.length > 0) {
+        // Find appropriate ranking
+        const ranking = rankings.find(r =>
+          kpiValue >= (r.min_value || 0) && kpiValue <= (r.max_value || 100)
+        );
+        kpirankingid = ranking?.kpirankingid || rankings[0].kpirankingid;
+      }
 
       const { data, error } = await supabase
         .from('kpi')
         .insert([{
           empid: values.empid,
-          kpivalue: values.kpivalue,
+          kpivalue: Math.round(kpiValue),
           calculatedate: values.calculation_date.format('YYYY-MM-DD'),
           kpiyear: values.calculation_date.year(),
           kpirankingid: kpirankingid,
@@ -661,28 +831,35 @@ const HRDashboard = () => {
       if (error) throw error;
 
       // Add KPI details for categories
-      if (values.categories && values.categories.length > 0) {
-        const kpiDetails = values.categories.map(cat => ({
-          kpiid: data[0].kpiid,
-          category_id: cat.category_id,
-          score: cat.score,
-          comments: cat.comments
-        }));
+      if (values.categories && Array.isArray(values.categories) && values.categories.length > 0) {
+        const kpiDetails = values.categories
+          .filter(cat => cat.category_id && cat.score != null)
+          .map(cat => ({
+            kpiid: data[0]?.kpiid,
+            category_id: cat.category_id,
+            score: Math.round(parseFloat(cat.score) || 0),
+            comments: cat.comments?.trim() || null
+          }));
 
-        await supabase
-          .from('kpi_details')
-          .insert(kpiDetails);
+        if (kpiDetails.length > 0) {
+          await supabase
+            .from('kpi_details')
+            .insert(kpiDetails);
+        }
       }
 
       // Update employee's KPI score
       await supabase
         .from('employee')
-        .update({ kpiscore: values.kpivalue })
+        .update({
+          kpiscore: Math.round(kpiValue),
+          updated_at: new Date().toISOString()
+        })
         .eq('empid', values.empid);
 
-      await logHROperation('ADD_KPI', data[0].kpiid, {
+      await logHROperation('ADD_KPI', data[0]?.kpiid, {
         employeeId: values.empid,
-        kpiValue: values.kpivalue,
+        kpiValue: Math.round(kpiValue),
         ranking: kpirankingid
       });
 
@@ -700,16 +877,23 @@ const HRDashboard = () => {
 
   const handleScheduleTraining = async (values) => {
     try {
+      // Validate required fields
+      if (!values.topic || !values.trainer || !values.venue) {
+        message.error('Topic, trainer, and venue are required');
+        return;
+      }
+
       const { data, error } = await supabase
         .from('training')
         .insert([{
-          topic: values.topic,
-          venue: values.venue,
-          trainer: values.trainer,
-          duration: values.duration,
+          topic: values.topic.trim(),
+          venue: values.venue.trim(),
+          trainer: values.trainer.trim(),
+          duration: values.duration?.trim() || null,
           date: values.training_date.format('YYYY-MM-DD'),
-          starttime: values.start_time?.format('HH:mm:ss'),
-          endtime: values.end_time?.format('HH:mm:ss'),
+          starttime: values.start_time?.format('HH:mm:ss') || null,
+          endtime: values.end_time?.format('HH:mm:ss') || null,
+          status: 'scheduled',
           created_at: new Date().toISOString()
         }])
         .select();
@@ -717,20 +901,23 @@ const HRDashboard = () => {
       if (error) throw error;
 
       // Link employees to training
-      if (values.employees && values.employees.length > 0) {
-        // Add to training_participants
+      if (values.employees && Array.isArray(values.employees) && values.employees.length > 0) {
         const participants = values.employees.map(empId => ({
-          trainingid: data[0].trainingid,
+          trainingid: data[0]?.trainingid,
           empid: empId,
           status: 'scheduled'
         }));
 
-        await supabase
+        const { error: participantError } = await supabase
           .from('training_participants')
           .insert(participants);
+
+        if (participantError) {
+          console.warn('Training participants insert failed:', participantError);
+        }
       }
 
-      await logHROperation('SCHEDULE_TRAINING', data[0].trainingid, {
+      await logHROperation('SCHEDULE_TRAINING', data[0]?.trainingid, {
         topic: values.topic,
         trainer: values.trainer,
         date: values.training_date.format('YYYY-MM-DD'),
@@ -775,14 +962,14 @@ const HRDashboard = () => {
     try {
       const { error } = await supabase
         .from('employeeleave')
-        .update({ 
+        .update({
           leavestatus: 'approved',
           approvedby: profile.empid
         })
         .eq('leaveid', leaveId);
 
       if (error) throw error;
-      
+
       await logHROperation('APPROVE_LEAVE', leaveId, {
         employeeName: employeeName,
         action: 'approved'
@@ -801,7 +988,7 @@ const HRDashboard = () => {
     try {
       const { error } = await supabase
         .from('employeeleave')
-        .update({ 
+        .update({
           leavestatus: 'rejected',
           approvedby: profile.empid
         })
@@ -813,7 +1000,7 @@ const HRDashboard = () => {
         employeeName: employeeName,
         action: 'rejected'
       });
-      
+
       message.success('Leave rejected successfully!');
       fetchPendingLeaves();
       fetchRecentActivities();
@@ -845,11 +1032,7 @@ const HRDashboard = () => {
         case 'kpi_report':
           const { data: kpiReportData } = await supabase
             .from('kpi')
-            .select(`
-              *,
-              employee:empid (first_name, last_name, department),
-              kpiranking:kpiranking_id (kpirank)
-            `)
+            .select('*')
             .gte('calculatedate', startDate)
             .lte('calculatedate', endDate);
           data = kpiReportData || [];
@@ -858,10 +1041,7 @@ const HRDashboard = () => {
         case 'training_report':
           const { data: trainingReportData } = await supabase
             .from('training')
-            .select(`
-              *,
-              training_participants (employee:empid (first_name, last_name))
-            `)
+            .select('*')
             .gte('date', startDate)
             .lte('date', endDate);
           data = trainingReportData || [];
@@ -870,10 +1050,7 @@ const HRDashboard = () => {
         case 'promotion_report':
           const { data: promotionReportData } = await supabase
             .from('promotion_history')
-            .select(`
-              *,
-              employee:empid (first_name, last_name, department)
-            `)
+            .select('*')
             .gte('promotion_date', startDate)
             .lte('promotion_date', endDate);
           data = promotionReportData || [];
@@ -882,10 +1059,7 @@ const HRDashboard = () => {
         case 'attendance_report':
           const { data: attendanceData } = await supabase
             .from('attendance')
-            .select(`
-              *,
-              employee:empid (first_name, last_name, department)
-            `)
+            .select('*')
             .gte('date', startDate)
             .lte('date', endDate);
           data = attendanceData || [];
@@ -938,21 +1112,21 @@ const HRDashboard = () => {
     try {
       // Create table headers from the first object's keys
       const headers = Object.keys(data[0]);
-      
+
       const tableRows = [
         new TableRow({
-          children: headers.map(header => 
+          children: headers.map(header =>
             new TableCell({
               children: [new Paragraph({ children: [new TextRun(header)] })]
             })
           )
         }),
-        ...data.map(item => 
+        ...data.map(item =>
           new TableRow({
-            children: headers.map(header => 
+            children: headers.map(header =>
               new TableCell({
-                children: [new Paragraph({ 
-                  children: [new TextRun(String(item[header] || ''))] 
+                children: [new Paragraph({
+                  children: [new TextRun(String(item[header] || ''))]
                 })]
               })
             )
@@ -986,16 +1160,16 @@ const HRDashboard = () => {
       });
 
       const buffer = await Packer.toBuffer(doc);
-      const blob = new Blob([buffer], { 
-        type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' 
+      const blob = new Blob([buffer], {
+        type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
       });
-      
+
       const link = document.createElement('a');
       link.href = URL.createObjectURL(blob);
       link.download = `${fileName}.docx`;
       link.click();
       URL.revokeObjectURL(link.href);
-      
+
     } catch (error) {
       console.error('Error generating DOCX report:', error);
       message.error('Failed to generate DOCX report');
@@ -1062,8 +1236,7 @@ const HRDashboard = () => {
   const openEditEmployeeModal = (employee) => {
     editEmployeeForm.setFieldsValue({
       empid: employee.empid,
-      first_name: employee.first_name,
-      last_name: employee.last_name,
+      full_name: employee.full_name,
       email: employee.email,
       role: employee.role,
       department: employee.department,
@@ -1098,13 +1271,13 @@ const HRDashboard = () => {
   const employeeColumns = [
     {
       title: 'Employee',
-      dataIndex: 'first_name',
+      dataIndex: 'full_name',
       key: 'employee',
       render: (text, record) => (
         <Space>
           <Avatar icon={<UserOutlined />} />
           <div>
-            <div>{record.first_name} {record.last_name}</div>
+            <div>{record.full_name}</div>
             <Text type="secondary" style={{ fontSize: '12px' }}>{record.email}</Text>
           </div>
         </Space>
@@ -1148,33 +1321,33 @@ const HRDashboard = () => {
       key: 'actions',
       render: (_, record) => (
         <Space>
-          <Button 
-            type="link" 
-            size="small" 
+          <Button
+            type="link"
+            size="small"
             icon={<EyeOutlined />}
             onClick={() => setViewEmployeeModalVisible(record)}
           >
             View
           </Button>
-          <Button 
-            type="link" 
-            size="small" 
+          <Button
+            type="link"
+            size="small"
             icon={<EditOutlined />}
             onClick={() => openEditEmployeeModal(record)}
           >
             Edit
           </Button>
-          <Button 
-            type="link" 
-            size="small" 
+          <Button
+            type="link"
+            size="small"
             icon={<RiseOutlined />}
             onClick={() => openPromoteEmployeeModal(record)}
           >
             Promote
           </Button>
-          <Button 
-            type="link" 
-            size="small" 
+          <Button
+            type="link"
+            size="small"
             icon={<StarOutlined />}
             onClick={() => openAddKPIModal(record)}
           >
@@ -1182,14 +1355,14 @@ const HRDashboard = () => {
           </Button>
           <Popconfirm
             title="Are you sure you want to deactivate this employee?"
-            onConfirm={() => handleDeleteEmployee(record.empid, `${record.first_name} ${record.last_name}`)}
+            onConfirm={() => handleDeleteEmployee(record.empid, record.full_name)}
             okText="Yes"
             cancelText="No"
           >
-            <Button 
-              type="link" 
-              size="small" 
-              danger 
+            <Button
+              type="link"
+              size="small"
+              danger
               icon={<UserDeleteOutlined />}
             >
               Deactivate
@@ -1250,7 +1423,7 @@ const HRDashboard = () => {
       <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
         {/* Pending Leaves */}
         <Col xs={24} lg={12}>
-          <Card 
+          <Card
             title={
               <Space>
                 <CalendarOutlined />
@@ -1266,25 +1439,25 @@ const HRDashboard = () => {
                 renderItem={leave => (
                   <List.Item
                     actions={[
-                      <Button 
-                        type="link" 
-                        size="small" 
-                        onClick={() => handleApproveLeave(leave.leaveid, leave.employee?.first_name)}
+                      <Button
+                        type="link"
+                        size="small"
+                        onClick={() => handleApproveLeave(leave.leaveid, leave.employee?.full_name)}
                       >
                         Approve
                       </Button>,
-                      <Button 
-                        type="link" 
-                        size="small" 
+                      <Button
+                        type="link"
+                        size="small"
                         danger
-                        onClick={() => handleRejectLeave(leave.leaveid, leave.employee?.first_name)}
+                        onClick={() => handleRejectLeave(leave.leaveid, leave.employee?.full_name)}
                       >
                         Reject
                       </Button>
                     ]}
                   >
                     <List.Item.Meta
-                      title={`${leave.employee?.first_name} ${leave.employee?.last_name}`}
+                      title={leave.employee?.full_name}
                       description={`${leave.leavetype} - ${dayjs(leave.leavefromdate).format('MMM D')} to ${dayjs(leave.leavetodate).format('MMM D')}`}
                     />
                   </List.Item>
@@ -1298,7 +1471,7 @@ const HRDashboard = () => {
 
         {/* Recent Promotions */}
         <Col xs={24} lg={12}>
-          <Card 
+          <Card
             title={
               <Space>
                 <RiseOutlined />
@@ -1315,7 +1488,7 @@ const HRDashboard = () => {
                     dot={<TrophyOutlined style={{ fontSize: '16px' }} />}
                     color="green"
                   >
-                    <Text strong>{promo.employee?.first_name} {promo.employee?.last_name}</Text>
+                    <Text strong>{promo.employee?.full_name}</Text>
                     <br />
                     <Text type="secondary">
                       {promo.previousrole} → {promo.newrole}
@@ -1337,7 +1510,7 @@ const HRDashboard = () => {
       <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
         {/* Recent Activities */}
         <Col xs={24} lg={12}>
-          <Card 
+          <Card
             title={
               <Space>
                 <HistoryOutlined />
@@ -1354,7 +1527,7 @@ const HRDashboard = () => {
                       avatar={<Avatar icon={<UserOutlined />} />}
                       title={
                         <Text>
-                          {activity.hr?.first_name} {activity.hr?.last_name}
+                          {activity.hr?.full_name}
                         </Text>
                       }
                       description={
@@ -1377,7 +1550,7 @@ const HRDashboard = () => {
 
         {/* Upcoming Training */}
         <Col xs={24} lg={12}>
-          <Card 
+          <Card
             title={
               <Space>
                 <SolutionOutlined />
@@ -1438,7 +1611,7 @@ const HRDashboard = () => {
               onChange={setDepartmentFilter}
               allowClear
             >
-              {dashboardData.employeeStats?.departments && 
+              {dashboardData.employeeStats?.departments &&
                 Array.from({ length: dashboardData.employeeStats.departments }).map((_, i) => (
                   <Option key={i} value={`Department ${i + 1}`}>
                     Department {i + 1}
@@ -1461,8 +1634,8 @@ const HRDashboard = () => {
             </Select>
           </Col>
           <Col xs={24} sm={12} md={4}>
-            <Button 
-              type="primary" 
+            <Button
+              type="primary"
               icon={<ExportOutlined />}
               onClick={() => setReportModalVisible(true)}
               block
@@ -1474,8 +1647,8 @@ const HRDashboard = () => {
 
         <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
           <Col>
-            <Button 
-              type="primary" 
+            <Button
+              type="primary"
               icon={<UserAddOutlined />}
               onClick={() => setAddEmployeeModalVisible(true)}
             >
@@ -1483,7 +1656,7 @@ const HRDashboard = () => {
             </Button>
           </Col>
           <Col>
-            <Button 
+            <Button
               icon={<FileExcelOutlined />}
               onClick={() => generateEmployeeReport('employee_list', 'excel', dateRange)}
             >
@@ -1491,7 +1664,7 @@ const HRDashboard = () => {
             </Button>
           </Col>
           <Col>
-            <Button 
+            <Button
               icon={<FileWordOutlined />}
               onClick={() => generateEmployeeReport('employee_list', 'docx', dateRange)}
             >
@@ -1499,7 +1672,7 @@ const HRDashboard = () => {
             </Button>
           </Col>
           <Col>
-            <Button 
+            <Button
               icon={<FilterOutlined />}
               onClick={() => setBulkActionModalVisible(true)}
               disabled={selectedEmployees.length === 0}
@@ -1521,7 +1694,7 @@ const HRDashboard = () => {
           pagination={{
             pageSize: 10,
             showSizeChanger: true,
-            showTotal: (total, range) => 
+            showTotal: (total, range) =>
               `${range[0]}-${range[1]} of ${total} employees`
           }}
         />
@@ -1534,16 +1707,16 @@ const HRDashboard = () => {
     <Card>
       <Title level={3}>HR Reports</Title>
       <Text type="secondary">Generate comprehensive reports for various HR functions</Text>
-      
+
       <Divider />
-      
+
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={12}>
-          <Card 
+          <Card
             title="Report Generator"
             extra={
-              <Button 
-                type="primary" 
+              <Button
+                type="primary"
                 icon={<FileTextOutlined />}
                 onClick={() => setReportModalVisible(true)}
               >
@@ -1558,7 +1731,7 @@ const HRDashboard = () => {
                 type="info"
                 showIcon
               />
-              
+
               <div>
                 <Text strong>Available Reports:</Text>
                 <ul>
@@ -1587,7 +1760,7 @@ const HRDashboard = () => {
           <Card title="Quick Export">
             <Row gutter={[16, 16]}>
               <Col xs={24} sm={12}>
-                <Button 
+                <Button
                   icon={<FileExcelOutlined />}
                   block
                   size="large"
@@ -1598,7 +1771,7 @@ const HRDashboard = () => {
                 </Button>
               </Col>
               <Col xs={24} sm={12}>
-                <Button 
+                <Button
                   icon={<FileWordOutlined />}
                   block
                   size="large"
@@ -1609,7 +1782,7 @@ const HRDashboard = () => {
                 </Button>
               </Col>
               <Col xs={24} sm={12}>
-                <Button 
+                <Button
                   icon={<FileExcelOutlined />}
                   block
                   size="large"
@@ -1620,7 +1793,7 @@ const HRDashboard = () => {
                 </Button>
               </Col>
               <Col xs={24} sm={12}>
-                <Button 
+                <Button
                   icon={<FileWordOutlined />}
                   block
                   size="large"
@@ -1644,12 +1817,12 @@ const HRDashboard = () => {
           <BankOutlined /> HR Management Dashboard
         </Title>
         <Text type="secondary">
-          Welcome back, {profile?.first_name}! Manage your workforce efficiently.
+          Welcome back, {profile?.full_name}! Manage your workforce efficiently.
         </Text>
       </div>
 
-      <Tabs 
-        activeKey={activeTab} 
+      <Tabs
+        activeKey={activeTab}
         onChange={setActiveTab}
         items={[
           {
@@ -1699,20 +1872,11 @@ const HRDashboard = () => {
           onFinish={handleAddEmployee}
         >
           <Row gutter={16}>
-            <Col xs={24} sm={12}>
+            <Col xs={24}>
               <Form.Item
-                name="first_name"
-                label="First Name"
-                rules={[{ required: true, message: 'Please enter first name' }]}
-              >
-                <Input />
-              </Form.Item>
-            </Col>
-            <Col xs={24} sm={12}>
-              <Form.Item
-                name="last_name"
-                label="Last Name"
-                rules={[{ required: true, message: 'Please enter last name' }]}
+                name="full_name"
+                label="Full Name"
+                rules={[{ required: true, message: 'Please enter full name' }]}
               >
                 <Input />
               </Form.Item>
@@ -1881,10 +2045,10 @@ const HRDashboard = () => {
           </Form.Item>
 
           <Form.Item>
-            <Button 
-              type="primary" 
-              htmlType="submit" 
-              block 
+            <Button
+              type="primary"
+              htmlType="submit"
+              block
               loading={reportLoading}
               icon={<DownloadOutlined />}
             >

@@ -92,61 +92,131 @@ const ManagerDashboard = () => {
   const [searchEmployee, setSearchEmployee] = useState('');
 
   useEffect(() => {
-    initializeDashboard();
-  }, []);
-
-  const initializeDashboard = async () => {
-    setLoading(true);
-    try {
-      await Promise.all([
-        fetchTeamMembers(),
-        fetchTeamTasks(),
-        fetchTeamPerformance(),
-        fetchDepartmentStats(),
-        fetchRecentReports(),
-        fetchLeaveRequests(),
-        fetchLoanRequests()
-      ]);
-    } catch (error) {
-      console.error('Error initializing manager dashboard:', error);
-    } finally {
-      setLoading(false);
+    if (!profile?.empid) {
+      message.error('Manager profile not found');
+      return;
     }
-  };
+    initializeDashboard();
+  }, [profile?.empid]);
+
+const initializeDashboard = async () => {
+  setLoading(true);
+  try {
+    // First fetch team members as other data depends on it
+    const members = await fetchTeamMembers();
+    
+    // Then fetch everything else in parallel
+    await Promise.all([
+      fetchTeamTasks(),
+      fetchTeamPerformance(),
+      fetchDepartmentStats(),
+      fetchRecentReports(),
+      fetchLeaveRequests(),
+      fetchLoanRequests()
+    ]);
+  } catch (error) {
+    console.error('Error initializing manager dashboard:', error);
+    message.error('Failed to load dashboard data');
+  } finally {
+    setLoading(false);
+  }
+};
+
+// 9. Add loading states to components
+{loading ? (
+  <Card loading={true} style={{ minHeight: 200 }} />
+) : (
+  <Card
+    title={
+      <Space>
+        <TeamOutlined />
+        Team Members ({filteredTeamMembers.length})
+      </Space>
+    }
+    extra={
+      <Input
+        placeholder="Search team members..."
+        prefix={<SearchOutlined />}
+        value={searchEmployee}
+        onChange={(e) => setSearchEmployee(e.target.value)}
+        style={{ width: 200 }}
+      />
+    }
+  >
+    {/* Team members list */}
+  </Card>
+)}
 
   const fetchTeamMembers = async () => {
     try {
       const { data, error } = await supabase
         .from('employee')
-        .select('*')
+        .select('empid, full_name, email, phone, role, department, gender, status, basicsalary, kpiscore, satisfaction_score, dob, tenure')
         .eq('managerid', profile.empid)
         .eq('is_active', true)
-        .order('first_name', { ascending: true });
+        .order('full_name', { ascending: true });
 
-      if (error) throw error;
+      if (error) {
+        console.error('Supabase error:', error);
+        throw error;
+      }
+
       setTeamMembers(data || []);
+      return data || [];
     } catch (error) {
       console.error('Error fetching team members:', error);
+      message.error('Failed to load team members');
+      setTeamMembers([]);
+      return [];
     }
   };
 
   const fetchTeamTasks = async () => {
     try {
+      // First get team member IDs
+      const teamMemberIds = teamMembers.map(member => member.empid).filter(Boolean);
+
+      if (teamMemberIds.length === 0) {
+        setTeamTasks([]);
+        return;
+      }
+
       const { data, error } = await supabase
         .from('tasks')
-        .select(`
-          *,
-          assignee:assignee_id (first_name, last_name)
-        `)
-        .in('assignee_id', teamMembers.map(member => member.empid))
+        .select('*')
+        .in('assignee_id', teamMemberIds)
         .in('status', ['pending', 'in_progress'])
         .order('due_date', { ascending: true })
         .limit(10);
 
       if (error) throw error;
-      setTeamTasks(data || []);
+
+      // Manually fetch assignee data
+      const assigneeIds = [...new Set(data?.map(task => task.assignee_id).filter(Boolean))];
+      let assigneeData = [];
+
+      if (assigneeIds.length > 0) {
+        const { data: empData } = await supabase
+          .from('employee')
+          .select('empid, full_name')
+          .in('empid', assigneeIds);
+        assigneeData = empData || [];
+      }
+
+      const assigneeMap = {};
+      assigneeData.forEach(emp => {
+        assigneeMap[emp.empid] = emp;
+      });
+
+      const tasksWithAssignee = data?.map(task => ({
+        ...task,
+        assignee: assigneeMap[task.assignee_id] || { full_name: 'Unassigned' }
+      }));
+
+      setTeamTasks(tasksWithAssignee || []);
     } catch (error) {
       console.error('Error fetching team tasks:', error);
+      setTeamTasks([]);
     }
   };
 
@@ -212,21 +282,69 @@ const ManagerDashboard = () => {
 
   const fetchLeaveRequests = async () => {
     try {
+      const teamMemberIds = teamMembers.map(member => member.empid).filter(Boolean);
+
+      if (teamMemberIds.length === 0) {
+        setLeaveRequests([]);
+        return;
+      }
+
       const { data, error } = await supabase
         .from('employeeleave')
-        .select(`
-          *,
-          employee:empid (first_name, last_name, email),
-          leavetype:leavetypeid (leavetype)
-        `)
-        .in('empid', teamMembers.map(member => member.empid))
+        .select('*')
+        .in('empid', teamMemberIds)
         .eq('leavestatus', 'pending')
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      setLeaveRequests(data || []);
+
+      // Manually fetch employee and leave type data
+      const employeeIds = [...new Set(data?.map(leave => leave.empid).filter(Boolean))];
+      const leaveTypeIds = [...new Set(data?.map(leave => leave.leavetypeid).filter(Boolean))];
+
+      let employeeData = [];
+      let leaveTypeData = [];
+
+      if (employeeIds.length > 0) {
+        const { data: empData } = await supabase
+          .from('employee')
+          .select('empid, full_name, email, department')
+          .in('empid', employeeIds);
+        employeeData = empData || [];
+      }
+
+      if (leaveTypeIds.length > 0) {
+        const { data: ltData } = await supabase
+          .from('leavetype')
+          .select('leavetypeid, leavetype')
+          .in('leavetypeid', leaveTypeIds);
+        leaveTypeData = ltData || [];
+      }
+
+      const employeeMap = {};
+      employeeData.forEach(emp => {
+        employeeMap[emp.empid] = emp;
+      });
+
+      const leaveTypeMap = {};
+      leaveTypeData.forEach(lt => {
+        leaveTypeMap[lt.leavetypeid] = lt;
+      });
+
+      const leavesWithDetails = data?.map(leave => ({
+        ...leave,
+        employee: employeeMap[leave.empid] || {
+          full_name: 'Unknown',
+          email: 'N/A',
+          department: 'N/A'
+        },
+        leavetype: leaveTypeMap[leave.leavetypeid] || { leavetype: 'Unknown' }
+      }));
+
+      setLeaveRequests(leavesWithDetails || []);
     } catch (error) {
       console.error('Error fetching leave requests:', error);
+      setLeaveRequests([]);
     }
   };
 
@@ -236,7 +354,7 @@ const ManagerDashboard = () => {
         .from('loanrequest')
         .select(`
           *,
-          employee:empid (first_name, last_name, email, basicsalary),
+          employee:empid (full_name, email, basicsalary),
           loantype:loantypeid (loantype)
         `)
         .in('empid', teamMembers.map(member => member.empid))
@@ -250,34 +368,54 @@ const ManagerDashboard = () => {
     }
   };
 
-  // Task Management Functions
   const assignTask = async (values) => {
     try {
+      // Validate required fields
+      if (!values.title || !values.assignee_id) {
+        message.error('Task title and assignee are required');
+        return;
+      }
+
+      if (!values.due_date) {
+        message.error('Due date is required');
+        return;
+      }
+
+      // Validate due date is not in the past
+      const dueDate = dayjs(values.due_date);
+      if (dueDate.isBefore(dayjs(), 'day')) {
+        message.error('Due date cannot be in the past');
+        return;
+      }
+
       const { data, error } = await supabase
         .from('tasks')
         .insert([{
-          ...values,
+          title: values.title.trim(),
+          description: values.description?.trim() || null,
           assignee_id: values.assignee_id,
-          created_by: profile.empid,
-          due_date: values.due_date.format('YYYY-MM-DD'),
+          created_by: profile?.empid,
+          due_date: dueDate.format('YYYY-MM-DD HH:mm:ss'),
+          priority: values.priority || 'medium',
           status: 'pending',
           created_at: dayjs().format('YYYY-MM-DD HH:mm:ss'),
           updated_at: dayjs().format('YYYY-MM-DD HH:mm:ss')
-        }]);
+        }])
+        .select();
 
       if (error) throw error;
-      
+
       // Log the operation
       await supabase
         .from('manager_operations')
         .insert([{
           operation: 'assign_task',
           record_id: data?.[0]?.id,
-          manager_id: profile.empid,
+          manager_id: profile?.empid,
           details: {
             task_title: values.title,
             assignee_id: values.assignee_id,
-            due_date: values.due_date.format('YYYY-MM-DD')
+            due_date: dueDate.format('YYYY-MM-DD')
           },
           operation_time: dayjs().format('YYYY-MM-DD HH:mm:ss')
         }]);
@@ -291,6 +429,7 @@ const ManagerDashboard = () => {
       message.error('Failed to assign task');
     }
   };
+
 
   const giveFeedback = async (values) => {
     try {
@@ -320,14 +459,24 @@ const ManagerDashboard = () => {
     }
   };
 
-  // Leave Management Functions
   const handleLeaveAction = async (leaveId, action, remarks = '') => {
     try {
+      if (!leaveId || !action) {
+        message.error('Invalid leave action');
+        return;
+      }
+
+      if (!['approved', 'rejected'].includes(action)) {
+        message.error('Invalid action type');
+        return;
+      }
+
       const { error } = await supabase
         .from('employeeleave')
         .update({
           leavestatus: action,
-          approvedby: profile.empid,
+          approvedby: profile?.empid,
+          remarks: remarks?.trim() || null,
           updated_at: dayjs().format('YYYY-MM-DD HH:mm:ss')
         })
         .eq('leaveid', leaveId);
@@ -340,10 +489,10 @@ const ManagerDashboard = () => {
         .insert([{
           operation: `${action}_leave`,
           record_id: leaveId,
-          manager_id: profile.empid,
+          manager_id: profile?.empid,
           details: {
             action: action,
-            remarks: remarks,
+            remarks: remarks || '',
             date: dayjs().format('YYYY-MM-DD')
           },
           operation_time: dayjs().format('YYYY-MM-DD HH:mm:ss')
@@ -359,15 +508,26 @@ const ManagerDashboard = () => {
     }
   };
 
-  // Loan Management Functions
   const handleLoanAction = async (loanId, action, remarks = '') => {
     try {
+      if (!loanId || !action) {
+        message.error('Invalid loan action');
+        return;
+      }
+
+      if (!['approved', 'rejected'].includes(action)) {
+        message.error('Invalid action type');
+        return;
+      }
+
       const { error } = await supabase
         .from('loanrequest')
         .update({
           status: action,
-          processedby: profile.empid,
-          processedat: dayjs().format('YYYY-MM-DD HH:mm:ss')
+          processedby: profile?.empid,
+          remarks: remarks?.trim() || null,
+          processedat: dayjs().format('YYYY-MM-DD HH:mm:ss'),
+          updated_at: dayjs().format('YYYY-MM-DD HH:mm:ss')
         })
         .eq('loanrequestid', loanId);
 
@@ -379,10 +539,10 @@ const ManagerDashboard = () => {
         .insert([{
           operation: `${action}_loan`,
           record_id: loanId,
-          manager_id: profile.empid,
+          manager_id: profile?.empid,
           details: {
             action: action,
-            remarks: remarks,
+            remarks: remarks || '',
             date: dayjs().format('YYYY-MM-DD')
           },
           operation_time: dayjs().format('YYYY-MM-DD HH:mm:ss')
@@ -409,15 +569,15 @@ const ManagerDashboard = () => {
   const exportToWord = async (data, filename, title) => {
     const tableRows = [
       new TableRow({
-        children: Object.keys(data[0] || {}).map(key => 
+        children: Object.keys(data[0] || {}).map(key =>
           new TableCell({
             children: [new Paragraph({ text: key, style: 'Heading3' })],
           })
         ),
       }),
-      ...data.map(item => 
+      ...data.map(item =>
         new TableRow({
-          children: Object.values(item).map(value => 
+          children: Object.values(item).map(value =>
             new TableCell({
               children: [new Paragraph({ text: String(value || '') })],
             })
@@ -473,7 +633,7 @@ const ManagerDashboard = () => {
       };
 
       let reportData = {};
-      
+
       switch (values.report_type) {
         case 'salary':
           reportData = await generateSalaryReport(reportConfig);
@@ -512,7 +672,7 @@ const ManagerDashboard = () => {
       // Export based on format
       const timestamp = dayjs().format('YYYYMMDD_HHmmss');
       const reportTitle = `${values.report_type}_report_${timestamp}`;
-      
+
       if (values.format === 'excel') {
         exportToExcel(reportData.rawData, reportTitle, values.report_type);
       } else if (values.format === 'docx') {
@@ -547,28 +707,62 @@ const ManagerDashboard = () => {
   };
 
   const generateSalaryReport = async (config) => {
-    const { data } = await supabase
-      .from('salary')
-      .select(`
-        *,
-        employee:empid (first_name, last_name, email, department)
-      `)
-      .in('empid', config.employee_id ? [config.employee_id] : teamMembers.map(m => m.empid))
-      .gte('salarydate', config.start_date)
-      .lte('salarydate', config.end_date);
+    try {
+      const teamMemberIds = teamMembers.map(m => m.empid).filter(Boolean);
+      const employeeIds = config.employee_id ? [config.employee_id] : teamMemberIds;
 
-    const formattedData = data?.map(item => ({
-      'Employee Name': `${item.employee?.first_name} ${item.employee?.last_name}`,
-      'Department': item.employee?.department,
-      'Basic Salary': item.basicsalary,
-      'OT Pay': item.otpay,
-      'Bonus Pay': item.bonuspay,
-      'Increment Pay': item.incrementpay,
-      'Total Salary': item.totalsalary,
-      'Salary Date': item.salarydate,
-    })) || [];
+      if (employeeIds.length === 0) {
+        return { rawData: [], type: 'salary' };
+      }
 
-    return { rawData: formattedData, type: 'salary' };
+      const { data } = await supabase
+        .from('salary')
+        .select('*')
+        .in('empid', employeeIds)
+        .gte('salarydate', config.start_date)
+        .lte('salarydate', config.end_date)
+        .order('salarydate', { ascending: false });
+
+      // Fetch employee data
+      const salaryEmpIds = [...new Set(data?.map(s => s.empid).filter(Boolean))];
+      let employeeData = [];
+
+      if (salaryEmpIds.length > 0) {
+        const { data: empData } = await supabase
+          .from('employee')
+          .select('empid, full_name, department')
+          .in('empid', salaryEmpIds);
+        employeeData = empData || [];
+      }
+
+      const employeeMap = {};
+      employeeData.forEach(emp => {
+        employeeMap[emp.empid] = emp;
+      });
+
+      const formattedData = data?.map(item => {
+        const employee = employeeMap[item.empid] || {
+          full_name: 'Unknown',
+          department: 'N/A'
+        };
+
+        return {
+          'Employee Name': employee.full_name,
+          'Department': employee.department,
+          'Basic Salary': item.basicsalary || 0,
+          'OT Pay': item.otpay || 0,
+          'Bonus Pay': item.bonuspay || 0,
+          'Increment Pay': item.incrementpay || 0,
+          'Total Salary': item.totalsalary || 0,
+          'Salary Date': item.salarydate || 'N/A',
+        };
+      }) || [];
+
+      return { rawData: formattedData, type: 'salary' };
+    } catch (error) {
+      console.error('Error generating salary report:', error);
+      return { rawData: [], type: 'salary' };
+    }
   };
 
   const generateAttendanceReport = async (config) => {
@@ -576,14 +770,14 @@ const ManagerDashboard = () => {
       .from('attendance')
       .select(`
         *,
-        employee:empid (first_name, last_name, department)
+        employee:empid (full_name, role)
       `)
       .in('empid', config.employee_id ? [config.employee_id] : teamMembers.map(m => m.empid))
       .gte('date', config.start_date)
       .lte('date', config.end_date);
 
     const formattedData = data?.map(item => ({
-      'Employee Name': `${item.employee?.first_name} ${item.employee?.last_name}`,
+      'Employee Name': `${item.employee?.full_name} `,
       'Department': item.employee?.department,
       'Date': item.date,
       'In Time': item.intime,
@@ -599,7 +793,7 @@ const ManagerDashboard = () => {
       .from('employeeleave')
       .select(`
         *,
-        employee:empid (first_name, last_name, department),
+        employee:empid (full_name, role),
         leavetype:leavetypeid (leavetype)
       `)
       .in('empid', config.employee_id ? [config.employee_id] : teamMembers.map(m => m.empid))
@@ -607,7 +801,7 @@ const ManagerDashboard = () => {
       .lte('leavetodate', config.end_date);
 
     const formattedData = data?.map(item => ({
-      'Employee Name': `${item.employee?.first_name} ${item.employee?.last_name}`,
+      'Employee Name': `${item.employee?.full_name}`,
       'Department': item.employee?.department,
       'Leave Type': item.leavetype?.leavetype,
       'From Date': item.leavefromdate,
@@ -625,14 +819,14 @@ const ManagerDashboard = () => {
       .from('kpi')
       .select(`
         *,
-        employee:empid (first_name, last_name, department)
+        employee:empid (full_name, role)
       `)
       .in('empid', config.employee_id ? [config.employee_id] : teamMembers.map(m => m.empid))
       .gte('calculatedate', config.start_date)
       .lte('calculatedate', config.end_date);
 
     const formattedData = data?.map(item => ({
-      'Employee Name': `${item.employee?.first_name} ${item.employee?.last_name}`,
+      'Employee Name': `${item.employee?.full_name} `,
       'Department': item.employee?.department,
       'KPI Value': item.kpivalue,
       'Calculation Date': item.calculatedate,
@@ -647,14 +841,14 @@ const ManagerDashboard = () => {
       .from('ot')
       .select(`
         *,
-        employee:empid (first_name, last_name, department)
+        employee:empid (full_name, role)
       `)
       .in('empid', config.employee_id ? [config.employee_id] : teamMembers.map(m => m.empid))
       .gte('created_at', config.start_date)
       .lte('created_at', config.end_date);
 
     const formattedData = data?.map(item => ({
-      'Employee Name': `${item.employee?.first_name} ${item.employee?.last_name}`,
+      'Employee Name': `${item.employee?.full_name} `,
       'Department': item.employee?.department,
       'OT Hours': item.othours,
       'Rate': item.rate,
@@ -671,19 +865,19 @@ const ManagerDashboard = () => {
       .from('performance_rating')
       .select(`
         *,
-        employee:empid (first_name, last_name, department),
-        evaluator:evaluator_id (first_name, last_name)
+        employee:empid (full_name, role),
+        evaluator:evaluator_id (full_name)
       `)
       .in('empid', config.employee_id ? [config.employee_id] : teamMembers.map(m => m.empid))
       .gte('rating_date', config.start_date)
       .lte('rating_date', config.end_date);
 
     const formattedData = data?.map(item => ({
-      'Employee Name': `${item.employee?.first_name} ${item.employee?.last_name}`,
+      'Employee Name': `${item.employee?.full_name}`,
       'Department': item.employee?.department,
       'Rating': item.rating,
       'Comments': item.comments,
-      'Evaluator': `${item.evaluator?.first_name} ${item.evaluator?.last_name}`,
+      'Evaluator': `${item.evaluator?.full_name}`,
       'Rating Date': item.rating_date,
     })) || [];
 
@@ -695,14 +889,14 @@ const ManagerDashboard = () => {
       .from('increment')
       .select(`
         *,
-        employee:empid (first_name, last_name, department)
+        employee:empid (full_name)
       `)
       .in('empid', config.employee_id ? [config.employee_id] : teamMembers.map(m => m.empid))
       .gte('created_at', config.start_date)
       .lte('created_at', config.end_date);
 
     const formattedData = data?.map(item => ({
-      'Employee Name': `${item.employee?.first_name} ${item.employee?.last_name}`,
+      'Employee Name': `${item.employee?.full_name}`,
       'Department': item.employee?.department,
       'Percentage': item.percentage,
       'Amount': item.amount,
@@ -719,14 +913,14 @@ const ManagerDashboard = () => {
       .from('nopay')
       .select(`
         *,
-        employee:empid (first_name, last_name, department)
+        employee:empid (full_name)
       `)
       .in('empid', config.employee_id ? [config.employee_id] : teamMembers.map(m => m.empid))
       .gte('created_at', config.start_date)
       .lte('created_at', config.end_date);
 
     const formattedData = data?.map(item => ({
-      'Employee Name': `${item.employee?.first_name} ${item.employee?.last_name}`,
+      'Employee Name': `${item.employee?.full_name} `,
       'Department': item.employee?.department,
       'Deduction Amount': item.deductionamount,
       'Deduction Date': item.deductiondate,
@@ -741,7 +935,7 @@ const ManagerDashboard = () => {
       .from('loanrequest')
       .select(`
         *,
-        employee:empid (first_name, last_name, department),
+        employee:empid (full_name),
         loantype:loantypeid (loantype)
       `)
       .in('empid', config.employee_id ? [config.employee_id] : teamMembers.map(m => m.empid))
@@ -749,7 +943,7 @@ const ManagerDashboard = () => {
       .lte('created_at', config.end_date);
 
     const formattedData = data?.map(item => ({
-      'Employee Name': `${item.employee?.first_name} ${item.employee?.last_name}`,
+      'Employee Name': `${item.employee?.full_name}`,
       'Department': item.employee?.department,
       'Loan Type': item.loantype?.loantype,
       'Amount': item.amount,
@@ -790,10 +984,8 @@ const ManagerDashboard = () => {
 
   // Filtered team members based on search
   const filteredTeamMembers = teamMembers.filter(member =>
-    member.first_name?.toLowerCase().includes(searchEmployee.toLowerCase()) ||
-    member.last_name?.toLowerCase().includes(searchEmployee.toLowerCase()) ||
-    member.email?.toLowerCase().includes(searchEmployee.toLowerCase()) ||
-    member.department?.toLowerCase().includes(searchEmployee.toLowerCase())
+    member.full_name?.toLowerCase().includes(searchEmployee.toLowerCase()) ||
+    member.email?.toLowerCase().includes(searchEmployee.toLowerCase())
   );
 
   const taskColumns = [
@@ -804,18 +996,19 @@ const ManagerDashboard = () => {
       render: (text, record) => (
         <div>
           <div><Text strong>{text}</Text></div>
-          <Text type="secondary" style={{ fontSize: '12px' }}>
-            {record.description}
-          </Text>
+          {record.description && (
+            <Text type="secondary" style={{ fontSize: '12px' }}>
+              {record.description}
+            </Text>
+          )}
         </div>
       )
     },
     {
       title: 'Assignee',
-      dataIndex: ['assignee', 'first_name'],
+      dataIndex: ['assignee', 'full_name'],
       key: 'assignee',
-      render: (text, record) => 
-        `${record.assignee?.first_name} ${record.assignee?.last_name}`
+      render: (text, record) => record.assignee?.full_name || 'Unassigned'  // ✅ FIXED
     },
     {
       title: 'Due Date',
@@ -824,12 +1017,30 @@ const ManagerDashboard = () => {
       render: (date) => dayjs(date).format('DD/MM/YYYY')
     },
     {
+      title: 'Priority',
+      dataIndex: 'priority',
+      key: 'priority',
+      render: (priority) => (
+        <Tag color={
+          priority === 'high' ? 'red' :
+            priority === 'medium' ? 'orange' :
+              'blue'
+        }>
+          {priority?.toUpperCase()}
+        </Tag>
+      )
+    },
+    {
       title: 'Status',
       dataIndex: 'status',
       key: 'status',
       render: (status) => (
-        <Tag color={status === 'completed' ? 'green' : status === 'in_progress' ? 'blue' : 'orange'}>
-          {status.replace('_', ' ')}
+        <Tag color={
+          status === 'completed' ? 'green' :
+            status === 'in_progress' ? 'blue' :
+              'orange'
+        }>
+          {status?.replace('_', ' ').toUpperCase()}
         </Tag>
       )
     },
@@ -838,14 +1049,18 @@ const ManagerDashboard = () => {
       key: 'actions',
       render: (_, record) => (
         <Space>
-          <Button type="link" icon={<EditOutlined />} size="small">Edit</Button>
+          <Button type="link" icon={<EditOutlined />} size="small">
+            Edit
+          </Button>
           <Popconfirm
             title="Are you sure to delete this task?"
             onConfirm={() => deleteTask(record.id)}
             okText="Yes"
             cancelText="No"
           >
-            <Button type="link" danger icon={<DeleteOutlined />} size="small">Delete</Button>
+            <Button type="link" danger icon={<DeleteOutlined />} size="small">
+              Delete
+            </Button>
           </Popconfirm>
         </Space>
       )
@@ -855,10 +1070,16 @@ const ManagerDashboard = () => {
   const leaveColumns = [
     {
       title: 'Employee',
-      dataIndex: ['employee', 'first_name'],
+      dataIndex: ['employee', 'full_name'],
       key: 'employee',
-      render: (text, record) => 
-        `${record.employee?.first_name} ${record.employee?.last_name}`
+      render: (text, record) => (
+        <Space direction="vertical" size={0}>
+          <Text strong>{record.employee?.full_name || 'Unknown'}</Text>
+          <Text type="secondary" style={{ fontSize: '12px' }}>
+            {record.employee?.department}
+          </Text>
+        </Space>
+      )
     },
     {
       title: 'Leave Type',
@@ -866,29 +1087,34 @@ const ManagerDashboard = () => {
       key: 'leavetype'
     },
     {
-      title: 'From Date',
-      dataIndex: 'leavefromdate',
-      key: 'leavefromdate',
-      render: (date) => dayjs(date).format('DD/MM/YYYY')
-    },
-    {
-      title: 'To Date',
-      dataIndex: 'leavetodate',
-      key: 'leavetodate',
-      render: (date) => dayjs(date).format('DD/MM/YYYY')
+      title: 'Duration',
+      key: 'duration',
+      render: (_, record) => (
+        <Space direction="vertical" size={0}>
+          <Text>{dayjs(record.leavefromdate).format('DD/MM/YYYY')}</Text>
+          <Text type="secondary">to</Text>
+          <Text>{dayjs(record.leavetodate).format('DD/MM/YYYY')}</Text>
+          <Tag color="blue">{record.duration} days</Tag>
+        </Space>
+      )
     },
     {
       title: 'Reason',
       dataIndex: 'leavereason',
-      key: 'reason'
+      key: 'reason',
+      ellipsis: true
     },
     {
       title: 'Status',
       dataIndex: 'leavestatus',
       key: 'status',
       render: (status) => (
-        <Tag color={status === 'approved' ? 'green' : status === 'rejected' ? 'red' : 'orange'}>
-          {status}
+        <Tag color={
+          status === 'approved' ? 'green' :
+            status === 'rejected' ? 'red' :
+              'orange'
+        }>
+          {status?.toUpperCase()}
         </Tag>
       )
     },
@@ -896,19 +1122,17 @@ const ManagerDashboard = () => {
       title: 'Actions',
       key: 'actions',
       render: (_, record) => (
-        <Space>
-          <Button 
-            type="link" 
-            icon={<CheckOutlined />} 
-            size="small"
-            onClick={() => {
-              setSelectedLeave(record);
-              setIsLeaveModalVisible(true);
-            }}
-          >
-            Review
-          </Button>
-        </Space>
+        <Button
+          type="primary"
+          size="small"
+          icon={<CheckOutlined />}
+          onClick={() => {
+            setSelectedLeave(record);
+            setIsLeaveModalVisible(true);
+          }}
+        >
+          Review
+        </Button>
       )
     }
   ];
@@ -916,10 +1140,16 @@ const ManagerDashboard = () => {
   const loanColumns = [
     {
       title: 'Employee',
-      dataIndex: ['employee', 'first_name'],
+      dataIndex: ['employee', 'full_name'],
       key: 'employee',
-      render: (text, record) => 
-        `${record.employee?.first_name} ${record.employee?.last_name}`
+      render: (text, record) => (
+        <Space direction="vertical" size={0}>
+          <Text strong>{record.employee?.full_name || 'Unknown'}</Text>
+          <Text type="secondary" style={{ fontSize: '12px' }}>
+            Salary: ${record.employee?.basicsalary?.toLocaleString()}
+          </Text>
+        </Space>
+      )
     },
     {
       title: 'Loan Type',
@@ -930,27 +1160,33 @@ const ManagerDashboard = () => {
       title: 'Amount',
       dataIndex: 'amount',
       key: 'amount',
-      render: (amount) => `$${amount?.toLocaleString()}`
+      render: (amount) => (
+        <Text strong style={{ color: '#1890ff' }}>
+          ${amount?.toLocaleString()}
+        </Text>
+      )
     },
     {
-      title: 'Duration',
-      dataIndex: 'duration',
-      key: 'duration',
-      render: (duration) => `${duration} months`
-    },
-    {
-      title: 'Interest Rate',
-      dataIndex: 'interestrate',
-      key: 'interestrate',
-      render: (rate) => `${rate}%`
+      title: 'Terms',
+      key: 'terms',
+      render: (_, record) => (
+        <Space direction="vertical" size={0}>
+          <Text>{record.duration} months</Text>
+          <Text type="secondary">{record.interestrate}% interest</Text>
+        </Space>
+      )
     },
     {
       title: 'Status',
       dataIndex: 'status',
       key: 'status',
       render: (status) => (
-        <Tag color={status === 'approved' ? 'green' : status === 'rejected' ? 'red' : 'orange'}>
-          {status}
+        <Tag color={
+          status === 'approved' ? 'green' :
+            status === 'rejected' ? 'red' :
+              'orange'
+        }>
+          {status?.toUpperCase()}
         </Tag>
       )
     },
@@ -958,19 +1194,17 @@ const ManagerDashboard = () => {
       title: 'Actions',
       key: 'actions',
       render: (_, record) => (
-        <Space>
-          <Button 
-            type="link" 
-            icon={<CheckOutlined />} 
-            size="small"
-            onClick={() => {
-              setSelectedLoan(record);
-              setIsLoanModalVisible(true);
-            }}
-          >
-            Review
-          </Button>
-        </Space>
+        <Button
+          type="primary"
+          size="small"
+          icon={<CheckOutlined />}
+          onClick={() => {
+            setSelectedLoan(record);
+            setIsLoanModalVisible(true);
+          }}
+        >
+          Review
+        </Button>
       )
     }
   ];
@@ -994,8 +1228,8 @@ const ManagerDashboard = () => {
   return (
     <div style={{ padding: '16px', maxWidth: '1400px', margin: '0 auto' }}>
       {/* Header */}
-      <Card size="small" style={{ 
-        marginBottom: 16, 
+      <Card size="small" style={{
+        marginBottom: 16,
         background: 'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)',
         border: 'none'
       }}>
@@ -1008,7 +1242,7 @@ const ManagerDashboard = () => {
               </Title>
               <Badge count={<UserOutlined />} offset={[-5, 0]}>
                 <Tag color="white" style={{ color: '#52c41a', fontWeight: 'bold' }}>
-                  {profile?.first_name} {profile?.last_name}
+                  {profile?.full_name}
                 </Tag>
               </Badge>
             </Space>
@@ -1023,7 +1257,7 @@ const ManagerDashboard = () => {
 
       {/* Welcome Alert */}
       <Alert
-        message={`Welcome back, ${profile?.first_name || 'Manager'}!`}
+        message={`Welcome back, ${profile?.full_name || 'Manager'}!`}
         description="Manage your team, track performance, monitor tasks, and oversee department operations."
         type="info"
         showIcon
@@ -1084,8 +1318,8 @@ const ManagerDashboard = () => {
             {/* Action Buttons */}
             <Row gutter={[8, 8]} style={{ marginBottom: 16 }}>
               <Col>
-                <Button 
-                  type="primary" 
+                <Button
+                  type="primary"
                   icon={<PlusOutlined />}
                   onClick={() => setIsTaskModalVisible(true)}
                 >
@@ -1093,8 +1327,8 @@ const ManagerDashboard = () => {
                 </Button>
               </Col>
               <Col>
-                <Button 
-                  type="default" 
+                <Button
+                  type="default"
                   icon={<DownloadOutlined />}
                   onClick={() => setIsReportModalVisible(true)}
                 >
@@ -1102,8 +1336,8 @@ const ManagerDashboard = () => {
                 </Button>
               </Col>
               <Col>
-                <Button 
-                  type="default" 
+                <Button
+                  type="default"
                   icon={<ReloadOutlined />}
                   onClick={initializeDashboard}
                 >
@@ -1115,7 +1349,7 @@ const ManagerDashboard = () => {
             {/* Team Members Section */}
             <Row gutter={[16, 16]}>
               <Col xs={24} lg={12}>
-                <Card 
+                <Card
                   title={
                     <Space>
                       <TeamOutlined />
@@ -1137,8 +1371,8 @@ const ManagerDashboard = () => {
                     renderItem={(employee) => (
                       <List.Item
                         actions={[
-                          <Button 
-                            type="link" 
+                          <Button
+                            type="link"
                             icon={<MessageOutlined />}
                             onClick={() => {
                               setSelectedEmployee(employee);
@@ -1151,16 +1385,24 @@ const ManagerDashboard = () => {
                       >
                         <List.Item.Meta
                           avatar={<Avatar icon={<UserOutlined />} />}
-                          title={`${employee.first_name} ${employee.last_name}`}
+                          title={employee.full_name}  // ✅ CORRECT
                           description={
                             <Space direction="vertical" size={0}>
                               <Text type="secondary">{employee.email}</Text>
-                              <Text type="secondary">{employee.department}</Text>
-                              <Progress 
-                                percent={employee.kpiscore || 0} 
-                                size="small" 
-                                status={employee.kpiscore >= 80 ? 'success' : employee.kpiscore >= 60 ? 'normal' : 'exception'}
-                              />
+                              <Text type="secondary">{employee.role} - {employee.department}</Text>
+                              <Space>
+                                <Text type="secondary">KPI:</Text>
+                                <Progress
+                                  percent={employee.kpiscore || 0}
+                                  size="small"
+                                  status={
+                                    employee.kpiscore >= 80 ? 'success' :
+                                      employee.kpiscore >= 60 ? 'normal' :
+                                        'exception'
+                                  }
+                                  style={{ width: 100 }}
+                                />
+                              </Space>
                             </Space>
                           }
                         />
@@ -1171,7 +1413,7 @@ const ManagerDashboard = () => {
               </Col>
 
               <Col xs={24} lg={12}>
-                <Card 
+                <Card
                   title={
                     <Space>
                       <CalendarOutlined />
@@ -1192,7 +1434,7 @@ const ManagerDashboard = () => {
             {/* Pending Approvals */}
             <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
               <Col xs={24} lg={12}>
-                <Card 
+                <Card
                   title={
                     <Space>
                       <ExclamationCircleOutlined />
@@ -1210,7 +1452,7 @@ const ManagerDashboard = () => {
               </Col>
 
               <Col xs={24} lg={12}>
-                <Card 
+                <Card
                   title={
                     <Space>
                       <FundOutlined />
@@ -1236,8 +1478,8 @@ const ManagerDashboard = () => {
                 <Card
                   title="Report Generation"
                   extra={
-                    <Button 
-                      type="primary" 
+                    <Button
+                      type="primary"
                       icon={<DownloadOutlined />}
                       onClick={() => setIsReportModalVisible(true)}
                     >
@@ -1295,10 +1537,16 @@ const ManagerDashboard = () => {
             <TextArea rows={3} placeholder="Enter task description" />
           </Form.Item>
           <Form.Item name="assignee_id" label="Assign To" rules={[{ required: true }]}>
-            <Select placeholder="Select team member">
+            <Select
+              placeholder="Select team member"
+              showSearch
+              filterOption={(input, option) =>
+                option.children.toLowerCase().indexOf(input.toLowerCase()) >= 0
+              }
+            >
               {teamMembers.map(member => (
                 <Option key={member.empid} value={member.empid}>
-                  {member.first_name} {member.last_name} - {member.department}
+                  {member.full_name} - {member.role} ({member.department})
                 </Option>
               ))}
             </Select>
@@ -1331,7 +1579,7 @@ const ManagerDashboard = () => {
 
       {/* Feedback Modal */}
       <Modal
-        title={`Give Feedback to ${selectedEmployee?.first_name} ${selectedEmployee?.last_name}`}
+        title={`Give Feedback to ${selectedEmployee?.full_name} `}
         open={isFeedbackModalVisible}
         onCancel={() => {
           setIsFeedbackModalVisible(false);
@@ -1415,13 +1663,13 @@ const ManagerDashboard = () => {
               </Form.Item>
             </Col>
           </Row>
-          
+
           <Form.Item name="date_range" label="Date Range" initialValue={[dayjs().subtract(7, 'day'), dayjs()]}>
             <RangePicker style={{ width: '100%' }} />
           </Form.Item>
 
           <Form.Item name="employee_id" label="Employee (Optional)">
-            <Select 
+            <Select
               placeholder="Select specific employee (leave empty for all team members)"
               allowClear
               showSearch
@@ -1431,7 +1679,7 @@ const ManagerDashboard = () => {
             >
               {teamMembers.map(member => (
                 <Option key={member.empid} value={member.empid}>
-                  {member.first_name} {member.last_name} - {member.department}
+                  {member.full_name} - {member.role}
                 </Option>
               ))}
             </Select>
@@ -1468,7 +1716,7 @@ const ManagerDashboard = () => {
           <div>
             <Descriptions column={1} bordered size="small">
               <Descriptions.Item label="Employee">
-                {selectedLeave.employee?.first_name} {selectedLeave.employee?.last_name}
+                {selectedLeave.employee?.full_name}
               </Descriptions.Item>
               <Descriptions.Item label="Leave Type">
                 {selectedLeave.leavetype?.leavetype}
@@ -1486,24 +1734,24 @@ const ManagerDashboard = () => {
                 {selectedLeave.leavereason}
               </Descriptions.Item>
             </Descriptions>
-            
+
             <Divider />
-            
+
             <Form form={leaveForm} layout="vertical">
               <Form.Item name="remarks" label="Remarks (Optional)">
                 <TextArea rows={3} placeholder="Enter any remarks..." />
               </Form.Item>
               <Form.Item>
                 <Space>
-                  <Button 
-                    type="primary" 
+                  <Button
+                    type="primary"
                     icon={<CheckOutlined />}
                     onClick={() => handleLeaveAction(selectedLeave.leaveid, 'approved', leaveForm.getFieldValue('remarks'))}
                   >
                     Approve
                   </Button>
-                  <Button 
-                    danger 
+                  <Button
+                    danger
                     icon={<CloseOutlined />}
                     onClick={() => handleLeaveAction(selectedLeave.leaveid, 'rejected', leaveForm.getFieldValue('remarks'))}
                   >
@@ -1537,7 +1785,7 @@ const ManagerDashboard = () => {
           <div>
             <Descriptions column={1} bordered size="small">
               <Descriptions.Item label="Employee">
-                {selectedLoan.employee?.first_name} {selectedLoan.employee?.last_name}
+                {selectedLoan.employee?.full_name}
               </Descriptions.Item>
               <Descriptions.Item label="Loan Type">
                 {selectedLoan.loantype?.loantype}
@@ -1558,24 +1806,24 @@ const ManagerDashboard = () => {
                 {dayjs(selectedLoan.date).format('DD/MM/YYYY')}
               </Descriptions.Item>
             </Descriptions>
-            
+
             <Divider />
-            
+
             <Form form={loanForm} layout="vertical">
               <Form.Item name="remarks" label="Remarks (Optional)">
                 <TextArea rows={3} placeholder="Enter any remarks..." />
               </Form.Item>
               <Form.Item>
                 <Space>
-                  <Button 
-                    type="primary" 
+                  <Button
+                    type="primary"
                     icon={<CheckOutlined />}
                     onClick={() => handleLoanAction(selectedLoan.loanrequestid, 'approved', loanForm.getFieldValue('remarks'))}
                   >
                     Approve
                   </Button>
-                  <Button 
-                    danger 
+                  <Button
+                    danger
                     icon={<CloseOutlined />}
                     onClick={() => handleLoanAction(selectedLoan.loanrequestid, 'rejected', loanForm.getFieldValue('remarks'))}
                   >

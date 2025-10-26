@@ -97,7 +97,7 @@ export class DatabaseService {
   static async getEmployees(filters = []) {
     return this.fetchData('employee', {
       filters: [...filters, { column: 'is_active', operator: 'eq', value: true }],
-      order: { column: 'first_name', ascending: true }
+      order: { column: 'full_name', ascending: true }
     });
   }
 
@@ -130,7 +130,7 @@ export class DatabaseService {
   // Leave management
   static async getPendingLeaves() {
     return this.fetchData('employeeleave', {
-      select: '*, employee:empid(first_name, last_name, email, department, role), leavetype:leavetypeid(leavetype)',
+      select: '*, employee:empid(full_name, email,  role), leavetype:leavetypeid(leavetype)',
       filters: [{ column: 'leavestatus', operator: 'eq', value: 'pending' }],
       order: { column: 'created_at', ascending: false }
     });
@@ -152,7 +152,7 @@ export class DatabaseService {
     }
     
     return this.fetchData('salary', {
-      select: '*, employee:empid(first_name, last_name, department)',
+      select: '*, employee:empid(full_name)',
       filters,
       order: { column: 'salarydate', ascending: false }
     });
@@ -169,7 +169,7 @@ export class DatabaseService {
     }
     
     return this.fetchData('attendance', {
-      select: '*, employee:empid(first_name, last_name)',
+      select: '*, employee:empid(full_name)',
       filters,
       order: { column: 'date', ascending: false }
     });
@@ -183,7 +183,7 @@ export class DatabaseService {
     }
     
     return this.fetchData('loanrequest', {
-      select: '*, employee:empid(first_name, last_name), loantype:loantypeid(loantype)',
+      select: '*, employee:empid(full_name), loantype:loantypeid(loantype)',
       filters,
       order: { column: 'created_at', ascending: false }
     });
@@ -197,7 +197,7 @@ export class DatabaseService {
     }
     
     return this.fetchData('training', {
-      select: '*, employee:empid(first_name, last_name)',
+      select: '*, employee:empid(full_name)',
       filters,
       order: { column: 'date', ascending: false }
     });
@@ -211,7 +211,7 @@ export class DatabaseService {
     }
     
     return this.fetchData('kpi', {
-      select: '*, employee:empid(first_name, last_name, department), kpiranking:kpirankingid(kpirank)',
+      select: '*, employee:empid(full_name, role), kpiranking:kpirankingid(kpirank)',
       filters,
       order: { column: 'calculatedate', ascending: false }
     });
@@ -225,7 +225,7 @@ export class DatabaseService {
     }
     
     return this.fetchData('epf_contributions', {
-      select: '*, employee:empid(first_name, last_name)',
+      select: '*, employee:empid(full_name)',
       filters,
       order: { column: 'month', ascending: false }
     });
@@ -239,7 +239,7 @@ export class DatabaseService {
     }
     
     return this.fetchData('tasks', {
-      select: '*, assignee:assignee_id(first_name, last_name)',
+      select: '*, assignee:assignee_id(full_name)',
       filters,
       order: { column: 'due_date', ascending: true }
     });
@@ -248,7 +248,7 @@ export class DatabaseService {
   // Department management
   static async getDepartments() {
     return this.fetchData('department', {
-      select: '*, manager:managerid(first_name, last_name)'
+      select: '*, manager:managerid(full_name)'
     });
   }
 

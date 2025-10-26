@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import {
   Row, Col, Card, Statistic, List, Typography, Tag, Button, Space, Avatar,
   Badge, Alert, Divider, Tabs, Form, Input, Select, DatePicker, Modal, Table,
-  message, Descriptions, Timeline, Progress, InputNumber, Upload, Steps, Rate
+  message, Descriptions, Timeline, Progress, InputNumber, Upload, Steps, Rate,
+  Spin
 } from 'antd';
 import {
   UserOutlined, CalendarOutlined, CheckCircleOutlined, ClockCircleOutlined,
@@ -10,7 +11,7 @@ import {
   PlusOutlined, UploadOutlined, HistoryOutlined, SolutionOutlined, BankOutlined,
   FileTextOutlined, LogoutOutlined, LoginOutlined, MessageOutlined, MailOutlined,
   StarOutlined, ProfileOutlined, EditOutlined, DownloadOutlined, DeleteOutlined,
-  SearchOutlined, FileExcelOutlined, FileWordOutlined
+  SearchOutlined, FileExcelOutlined, FileWordOutlined, LoadingOutlined
 } from '@ant-design/icons';
 import DatabaseService from '../../services/databaseService2';
 import { useAuth } from '../../contexts/AuthContext';
@@ -27,7 +28,7 @@ const { Step } = Steps;
 const { RangePicker } = DatePicker;
 
 const EmployeeDashboard = () => {
-  const { profile, logout } = useAuth();
+  const { profile, logout, isLoading: authLoading } = useAuth();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('overview');
@@ -79,20 +80,69 @@ const EmployeeDashboard = () => {
   const [profileForm] = Form.useForm();
   const [reportForm] = Form.useForm();
 
+  // Debugging useEffect
   useEffect(() => {
-    initializeDashboard();
-  }, []);
+    console.log('Auth loading:', authLoading);
+    console.log('Profile:', profile);
+    console.log('Dashboard loading:', loading);
+  }, [authLoading, profile, loading]);
 
-  const initializeDashboard = async () => {
+  // Handle authentication state
+  useEffect(() => {
+    if (authLoading) {
+      console.log('Auth still loading...');
+      return;
+    }
+
+    if (!profile) {
+      console.log('No profile found, redirecting to login...');
+      message.warning('Please log in to access the dashboard');
+      navigate('/login');
+      return;
+    }
+
+    console.log('Profile loaded, initializing dashboard...');
+    initializeDashboard();
+  }, [profile, authLoading, navigate]);
+
+  const initializeDashboard = async (retryCount = 0) => {
     try {
       setLoading(true);
+      console.log('Starting dashboard initialization...');
 
-      const results = await Promise.allSettled([
-        fetchMyTasks(),
-        fetchMyLeaves(),
+      // Check if we have the necessary profile data
+      if (!profile || !profile.empid) {
+        console.error('No profile or employee ID found');
+        message.error('Unable to load dashboard: No employee profile found');
+        setLoading(false);
+        return;
+      }
+
+      console.log('Employee ID:', profile.empid);
+
+      // Test database connection first with a simple query
+      try {
+        const testProfile = await DatabaseService.getEmployeeProfile(profile.empid);
+        console.log('Database test successful:', testProfile);
+      } catch (dbError) {
+        console.error('Database test failed:', dbError);
+        throw new Error('Database connection failed');
+      }
+
+      // Load critical data first
+      const criticalData = await Promise.allSettled([
+        fetchProfileData(),
         fetchAttendanceData(),
+        fetchMyTasks(),
+        fetchLeaveBalance()
+      ]);
+
+      console.log('Critical data loaded:', criticalData);
+
+      // Load non-critical data in background
+      const backgroundData = await Promise.allSettled([
+        fetchMyLeaves(),
         fetchSalaryData(),
-        fetchLeaveBalance(),
         fetchPromotionHistory(),
         fetchLoanRequests(),
         fetchTrainingRequests(),
@@ -100,164 +150,232 @@ const EmployeeDashboard = () => {
         fetchTeamMembers(),
         fetchDocuments(),
         fetchMyFeedback(),
-        fetchProfileData(),
         fetchAllEmployees()
       ]);
 
-      results.forEach((result, index) => {
-        if (result.status === 'rejected') {
-          console.warn(`Dashboard initialization ${index} failed:`, result.reason);
-        }
-      });
+      console.log('Background data loaded');
 
     } catch (error) {
       console.error('Error initializing employee dashboard:', error);
-      message.error('Failed to load some dashboard data');
+
+      if (retryCount < 2) {
+        console.log(`Retrying dashboard initialization... Attempt ${retryCount + 1}`);
+        setTimeout(() => {
+          initializeDashboard(retryCount + 1);
+        }, 2000 * (retryCount + 1));
+      } else {
+        message.error('Failed to load dashboard after multiple attempts. Please refresh the page.');
+      }
     } finally {
       setLoading(false);
+      console.log('Dashboard initialization completed');
     }
   };
 
-  // Fetch functions - Updated to match your schema
   const fetchMyTasks = async () => {
     try {
-      const data = await DatabaseService.getTasks(profile.empid);
-      setMyTasks(data || []);
+      console.log('Fetching tasks...');
+      const data = await DatabaseService.getTasks(profile?.empid);
+      console.log('Tasks data:', data);
+
+      // Ensure data is an array
+      const tasksArray = Array.isArray(data) ? data : [];
+      setMyTasks(tasksArray);
+      return tasksArray;
     } catch (error) {
       console.error('Error fetching tasks:', error);
       setMyTasks([]);
+      return [];
     }
   };
 
   const fetchMyLeaves = async () => {
     try {
-      const data = await DatabaseService.getLeaves({ employeeId: profile.empid });
-      setMyLeaves(data || []);
+      console.log('Fetching leaves...');
+      const data = await DatabaseService.getLeaves({ employeeId: profile?.empid });
+      console.log('Leaves data:', data);
+
+      const leavesArray = Array.isArray(data) ? data : [];
+      setMyLeaves(leavesArray);
+      return leavesArray;
     } catch (error) {
       console.error('Error fetching leaves:', error);
       setMyLeaves([]);
+      return [];
     }
   };
 
   const fetchAttendanceData = async () => {
     try {
+      console.log('Fetching attendance...');
       const month = dayjs().format('YYYY-MM');
-      const data = await DatabaseService.getAttendance({ employeeId: profile.empid, month });
-      setAttendanceData(data || {});
+      const data = await DatabaseService.getAttendance({ employeeId: profile?.empid, month });
+      console.log('Attendance data:', data);
+
+      // Ensure we have a valid object
+      const attendanceObj = data && typeof data === 'object' ? data : {};
+      setAttendanceData(attendanceObj);
+      return attendanceObj;
     } catch (error) {
       console.error('Error fetching attendance:', error);
       setAttendanceData({});
+      return {};
     }
   };
 
+
   const fetchSalaryData = async () => {
     try {
+      console.log('Fetching salary...');
       const month = dayjs().format('YYYY-MM');
-      const data = await DatabaseService.getSalaries({ employeeId: profile.empid, month });
+      const data = await DatabaseService.getSalaries({ employeeId: profile?.empid, month });
+      console.log('Salary data:', data);
       setSalaryData(data || {});
+      return data;
     } catch (error) {
       console.error('Error fetching salary:', error);
       setSalaryData({});
+      return {};
     }
   };
 
   const fetchLeaveBalance = async () => {
     try {
-      const balance = await DatabaseService.getLeaveBalance(profile.empid);
+      console.log('Fetching leave balance...');
+      const balance = await DatabaseService.getLeaveBalance(profile?.empid);
+      console.log('Leave balance:', balance);
       setLeaveBalance(balance || {});
+      return balance;
     } catch (error) {
       console.error('Error fetching leave balance:', error);
       setLeaveBalance({});
+      return {};
     }
   };
 
   const fetchPromotionHistory = async () => {
     try {
-      const data = await DatabaseService.getPromotions(profile.empid);
+      console.log('Fetching promotions...');
+      const data = await DatabaseService.getPromotions(profile?.empid);
+      console.log('Promotions data:', data);
       setPromotionHistory(data || []);
+      return data;
     } catch (error) {
       console.error('Error fetching promotions:', error);
       setPromotionHistory([]);
+      return [];
     }
   };
 
   const fetchLoanRequests = async () => {
     try {
-      const data = await DatabaseService.getLoans({ employeeId: profile.empid });
+      console.log('Fetching loans...');
+      const data = await DatabaseService.getLoans({ employeeId: profile?.empid });
+      console.log('Loans data:', data);
       setLoanRequests(data || []);
+      return data;
     } catch (error) {
       console.error('Error fetching loans:', error);
       setLoanRequests([]);
+      return [];
     }
   };
 
   const fetchTrainingRequests = async () => {
     try {
-      const data = await DatabaseService.getTrainingRequests({ employeeId: profile.empid });
+      console.log('Fetching training requests...');
+      const data = await DatabaseService.getTrainingRequests({ employeeId: profile?.empid });
+      console.log('Training data:', data);
       setTrainingRequests(data || []);
+      return data;
     } catch (error) {
       console.error('Error fetching training requests:', error);
       setTrainingRequests([]);
+      return [];
     }
   };
 
   const fetchEpfEtfRequests = async () => {
     try {
-      const data = await DatabaseService.getEpfEtfRequests({ employeeId: profile.empid });
+      console.log('Fetching EPF/ETF...');
+      const data = await DatabaseService.getEpfEtfRequests({ employeeId: profile?.empid });
+      console.log('EPF/ETF data:', data);
       setEpfEtfRequests(data || []);
+      return data;
     } catch (error) {
       console.error('Error fetching EPF/ETF:', error);
       setEpfEtfRequests([]);
+      return [];
     }
   };
 
   const fetchTeamMembers = async () => {
     try {
-      const data = await DatabaseService.getEmployees({ managerId: profile.empid });
+      console.log('Fetching team members...');
+      const data = await DatabaseService.getEmployees({ managerId: profile?.empid });
+      console.log('Team members data:', data);
       setTeamMembers(data || []);
+      return data;
     } catch (error) {
       console.error('Error fetching team members:', error);
       setTeamMembers([]);
+      return [];
     }
   };
 
   const fetchDocuments = async () => {
     try {
-      const data = await FileService.listEmployeeFiles(profile.empid);
+      console.log('Fetching documents...');
+      const data = await FileService.listEmployeeFiles(profile?.empid);
+      console.log('Documents data:', data);
       setDocuments(data || []);
+      return data;
     } catch (error) {
       console.error('Error fetching documents:', error);
       setDocuments([]);
+      return [];
     }
   };
 
   const fetchMyFeedback = async () => {
     try {
-      const data = await DatabaseService.getFeedback(profile.empid);
+      console.log('Fetching feedback...');
+      const data = await DatabaseService.getFeedback(profile?.empid);
+      console.log('Feedback data:', data);
       setMyFeedback(data || []);
+      return data;
     } catch (error) {
       console.error('Error fetching feedback:', error);
       setMyFeedback([]);
+      return [];
     }
   };
 
   const fetchProfileData = async () => {
     try {
-      const data = await DatabaseService.getEmployeeProfile(profile.empid);
+      console.log('Fetching profile data...');
+      const data = await DatabaseService.getEmployeeProfile(profile?.empid);
+      console.log('Profile data:', data);
       setProfileData(data || {});
+      return data;
     } catch (error) {
       console.error('Error fetching profile:', error);
       setProfileData({});
+      return {};
     }
   };
 
   const fetchAllEmployees = async () => {
     try {
+      console.log('Fetching all employees...');
       const data = await DatabaseService.getAllEmployees();
+      console.log('All employees data:', data);
       setAllEmployees(data || []);
+      return data;
     } catch (error) {
       console.error('Error fetching employees:', error);
       setAllEmployees([]);
+      return [];
     }
   };
 
@@ -269,33 +387,55 @@ const EmployeeDashboard = () => {
       'rejected': 'red',
       'completed': 'blue',
       'in-progress': 'purple',
-      'Active': 'green',
-      'Inactive': 'red',
+      'active': 'green',
+      'inactive': 'red',
       'scheduled': 'blue',
-      'submitted': 'orange'
+      'submitted': 'orange',
+      'present': 'green',
+      'absent': 'red'
     };
     return statusColors[status?.toLowerCase()] || 'default';
   };
 
   // Handle role navigation
   const handleRoleNavigation = () => {
+    if (!profile) return;
+
     if (profile.role === 'manager') {
       navigate('/manager-dashboard');
     } else if (profile.role === 'admin') {
       navigate('/admin-dashboard');
+    } else if (profile.role === 'undefined') {
+      navigate('/default-dashboard');
     }
   };
 
-  // Handle Apply Leave - Updated to match your schema
   const handleApplyLeave = async (values) => {
     try {
+      // Validate dates
+      if (!values.fromDate || !values.toDate) {
+        message.error('Please select both from and to dates');
+        return;
+      }
+
+      const fromDate = dayjs(values.fromDate);
+      const toDate = dayjs(values.toDate);
+
+      if (toDate.isBefore(fromDate)) {
+        message.error('To date cannot be before from date');
+        return;
+      }
+
+      const duration = toDate.diff(fromDate, 'day') + 1;
+
       const leaveData = {
-        empid: profile.empid,
+        empid: profile?.empid,
         leavetype: values.leaveType,
-        leavefromdate: values.fromDate.format('YYYY-MM-DD'),
-        leavetodate: values.toDate.format('YYYY-MM-DD'),
-        leavereason: values.reason,
-        leavestatus: 'pending'
+        leavefromdate: fromDate.format('YYYY-MM-DD'),
+        leavetodate: toDate.format('YYYY-MM-DD'),
+        leavereason: values.reason?.trim() || '',
+        leavestatus: 'pending',
+        duration: duration
       };
 
       await DatabaseService.applyLeave(leaveData);
@@ -309,17 +449,17 @@ const EmployeeDashboard = () => {
     }
   };
 
-  // Handle Mark Attendance - Updated to match your schema
+  // Handle Mark Attendance
   const handleMarkAttendance = async () => {
     try {
       const currentTime = new Date().toTimeString().split(' ')[0];
       const today = dayjs().format('YYYY-MM-DD');
-      
+
       // Check if attendance already exists for today
       const existingAttendance = attendanceData.todayRecord;
-      
+
       const attendanceDataToSend = {
-        empid: profile.empid,
+        empid: profile?.empid,
         date: today,
         status: 'present'
       };
@@ -343,14 +483,26 @@ const EmployeeDashboard = () => {
     }
   };
 
-  // Handle Apply Loan - Updated to match your schema
   const handleApplyLoan = async (values) => {
     try {
+      const amount = parseFloat(values.amount) || 0;
+      const duration = parseInt(values.duration) || 0;
+
+      if (amount <= 0) {
+        message.error('Loan amount must be greater than 0');
+        return;
+      }
+
+      if (duration <= 0) {
+        message.error('Duration must be greater than 0');
+        return;
+      }
+
       const loanData = {
-        empid: profile.empid,
+        empid: profile?.empid,
         loantype: values.loanType,
-        amount: values.amount,
-        duration: values.duration,
+        amount: Math.round(amount),
+        duration: duration,
         status: 'pending',
         date: dayjs().format('YYYY-MM-DD')
       };
@@ -366,11 +518,11 @@ const EmployeeDashboard = () => {
     }
   };
 
-  // Handle Request Training - Updated to match your schema
+  // Handle Request Training
   const handleRequestTraining = async (values) => {
     try {
       const trainingData = {
-        empid: profile.empid,
+        empid: profile?.empid,
         topic: values.topic,
         venue: values.venue,
         trainer: values.trainer,
@@ -390,11 +542,11 @@ const EmployeeDashboard = () => {
     }
   };
 
-  // Handle Apply for EPF/ETF - Updated to match your schema
+  // Handle Apply for EPF/ETF
   const handleApplyEpfEtf = async (values) => {
     try {
       const epfData = {
-        empid: profile.empid,
+        empid: profile?.empid,
         basicsalary: values.basicSalary,
         applieddate: dayjs().format('YYYY-MM-DD'),
         status: 'pending'
@@ -415,14 +567,14 @@ const EmployeeDashboard = () => {
   const handleUploadDocument = async (values) => {
     try {
       const file = values.file.fileList[0].originFileObj;
-      
+
       await FileService.uploadEmployeeDocument(
         file,
-        profile.empid,
+        profile?.empid,
         values.documentType,
         values.documentName || file.name
       );
-      
+
       message.success('Document uploaded successfully!');
       setDocumentModalVisible(false);
       documentForm.resetFields();
@@ -433,11 +585,11 @@ const EmployeeDashboard = () => {
     }
   };
 
-  // Handle Submit Feedback - Updated to match your schema
+  // Handle Submit Feedback
   const handleSubmitFeedback = async (values) => {
     try {
       const feedbackData = {
-        empid: profile.empid,
+        empid: profile?.empid,
         feedback_type: values.feedbackType,
         subject: values.subject,
         message: values.message,
@@ -456,10 +608,10 @@ const EmployeeDashboard = () => {
     }
   };
 
-  // Handle Update Profile - Updated to match your schema
+  // Handle Update Profile
   const handleUpdateProfile = async (values) => {
     try {
-      const updatedProfile = await DatabaseService.updateEmployeeProfile(profile.empid, values);
+      const updatedProfile = await DatabaseService.updateEmployeeProfile(profile?.empid, values);
       setProfileData(updatedProfile);
       message.success('Profile updated successfully!');
       setProfileModalVisible(false);
@@ -488,7 +640,7 @@ const EmployeeDashboard = () => {
   // Handle Delete Document
   const handleDeleteDocument = async (documentId) => {
     try {
-      await FileService.deleteEmployeeDocument(documentId, profile.empid);
+      await FileService.deleteEmployeeDocument(documentId, profile?.empid);
       message.success('Document deleted successfully!');
       fetchDocuments();
     } catch (error) {
@@ -497,11 +649,11 @@ const EmployeeDashboard = () => {
     }
   };
 
-  // Generate Report - Updated for XLSX and DOCX
+  // Generate Report
   const generateReport = async () => {
     try {
       const reportData = {
-        employeeId: selectedEmployee || profile.empid,
+        employeeId: selectedEmployee || profile?.empid,
         reportType,
         startDate: dateRange[0].format('YYYY-MM-DD'),
         endDate: dateRange[1].format('YYYY-MM-DD'),
@@ -519,7 +671,7 @@ const EmployeeDashboard = () => {
       const link = document.createElement('a');
       link.href = url;
       const extension = reportFormat === 'xlsx' ? 'xlsx' : 'docx';
-      link.setAttribute('download', `${reportType}_report_${profile.empid}_${dayjs().format('YYYY-MM-DD')}.${extension}`);
+      link.setAttribute('download', `${reportType}_report_${profile?.empid}_${dayjs().format('YYYY-MM-DD')}.${extension}`);
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -538,7 +690,7 @@ const EmployeeDashboard = () => {
   };
 
   // Tab Components
-  const OverviewTab = ({ profile, myTasks, myLeaves, attendanceData, salaryData, leaveBalance, getStatusColor, onMarkAttendance, onApplyLeave, onGenerateReport }) => (
+  const OverviewTab = () => (
     <div>
       <Row gutter={16} style={{ marginBottom: 16 }}>
         <Col span={6}>
@@ -603,10 +755,10 @@ const EmployeeDashboard = () => {
         <Col span={12}>
           <Card title="Quick Actions" style={{ textAlign: 'center' }}>
             <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-              <Button type="primary" icon={<LoginOutlined />} onClick={onMarkAttendance} block>
+              <Button type="primary" icon={<LoginOutlined />} onClick={() => setAttendanceModalVisible(true)} block>
                 Mark Attendance
               </Button>
-              <Button icon={<CalendarOutlined />} onClick={onApplyLeave} block>
+              <Button icon={<CalendarOutlined />} onClick={() => setLeaveModalVisible(true)} block>
                 Apply for Leave
               </Button>
               <Button icon={<LineChartOutlined />} onClick={() => setReportModalVisible(true)} block>
@@ -619,12 +771,12 @@ const EmployeeDashboard = () => {
     </div>
   );
 
-  const LeavesTab = ({ myLeaves, leaveBalance, onApplyLeave, getStatusColor }) => (
+  const LeavesTab = () => (
     <div>
       <Card
         title="My Leaves"
         extra={
-          <Button type="primary" icon={<PlusOutlined />} onClick={onApplyLeave}>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setLeaveModalVisible(true)}>
             Apply for Leave
           </Button>
         }
@@ -658,13 +810,13 @@ const EmployeeDashboard = () => {
               title: 'From Date',
               dataIndex: 'leavefromdate',
               key: 'leavefromdate',
-              render: (date) => dayjs(date).format('MMM D, YYYY')
+              render: (date) => date ? dayjs(date).format('MMM D, YYYY') : 'N/A'
             },
             {
               title: 'To Date',
               dataIndex: 'leavetodate',
               key: 'leavetodate',
-              render: (date) => dayjs(date).format('MMM D, YYYY')
+              render: (date) => date ? dayjs(date).format('MMM D, YYYY') : 'N/A'
             },
             {
               title: 'Status',
@@ -680,12 +832,12 @@ const EmployeeDashboard = () => {
     </div>
   );
 
-  const AttendanceTab = ({ attendanceData, onMarkAttendance }) => (
+  const AttendanceTab = () => (
     <div>
       <Card
         title="My Attendance"
         extra={
-          <Button type="primary" icon={<LoginOutlined />} onClick={onMarkAttendance}>
+          <Button type="primary" icon={<LoginOutlined />} onClick={() => setAttendanceModalVisible(true)}>
             Mark Attendance
           </Button>
         }
@@ -711,12 +863,12 @@ const EmployeeDashboard = () => {
     </div>
   );
 
-  const DocumentsTab = ({ documents, onUploadDocument }) => (
+  const DocumentsTab = () => (
     <div>
       <Card
         title="My Documents"
         extra={
-          <Button type="primary" icon={<UploadOutlined />} onClick={onUploadDocument}>
+          <Button type="primary" icon={<UploadOutlined />} onClick={() => setDocumentModalVisible(true)}>
             Upload Document
           </Button>
         }
@@ -740,7 +892,7 @@ const EmployeeDashboard = () => {
                 title: 'Upload Date',
                 dataIndex: 'uploaded_at',
                 key: 'uploaded_at',
-                render: (date) => dayjs(date).format('MMM D, YYYY')
+                render: (date) => date ? dayjs(date).format('MMM D, YYYY') : 'N/A'
               },
               {
                 title: 'Status',
@@ -757,18 +909,18 @@ const EmployeeDashboard = () => {
                 key: 'actions',
                 render: (_, record) => (
                   <Space>
-                    <Button 
-                      type="link" 
-                      size="small" 
+                    <Button
+                      type="link"
+                      size="small"
                       icon={<DownloadOutlined />}
                       onClick={() => handleDownloadDocument(record)}
                     >
                       Download
                     </Button>
-                    <Button 
-                      type="link" 
-                      danger 
-                      size="small" 
+                    <Button
+                      type="link"
+                      danger
+                      size="small"
                       icon={<DeleteOutlined />}
                       onClick={() => handleDeleteDocument(record.id)}
                     >
@@ -785,7 +937,7 @@ const EmployeeDashboard = () => {
           <div style={{ textAlign: 'center', padding: '40px', color: '#999' }}>
             <FileTextOutlined style={{ fontSize: '48px', marginBottom: '16px' }} />
             <div>No documents uploaded yet</div>
-            <Button type="primary" onClick={onUploadDocument} style={{ marginTop: '16px' }}>
+            <Button type="primary" onClick={() => setDocumentModalVisible(true)} style={{ marginTop: '16px' }}>
               Upload Your First Document
             </Button>
           </div>
@@ -794,12 +946,12 @@ const EmployeeDashboard = () => {
     </div>
   );
 
-  const LoansTab = ({ loanRequests, onApplyLoan, getStatusColor }) => (
+  const LoansTab = () => (
     <div>
       <Card
         title="My Loans"
         extra={
-          <Button type="primary" icon={<PlusOutlined />} onClick={onApplyLoan}>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setLoanModalVisible(true)}>
             Apply for Loan
           </Button>
         }
@@ -834,7 +986,7 @@ const EmployeeDashboard = () => {
               title: 'Applied Date',
               dataIndex: 'date',
               key: 'date',
-              render: (date) => dayjs(date).format('MMM D, YYYY')
+              render: (date) => date ? dayjs(date).format('MMM D, YYYY') : 'N/A'
             }
           ]}
           pagination={{ pageSize: 10 }}
@@ -845,12 +997,12 @@ const EmployeeDashboard = () => {
     </div>
   );
 
-  const TrainingTab = ({ trainingRequests, onRequestTraining, getStatusColor }) => (
+  const TrainingTab = () => (
     <div>
       <Card
         title="Training Requests"
         extra={
-          <Button type="primary" icon={<PlusOutlined />} onClick={onRequestTraining}>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setTrainingModalVisible(true)}>
             Request Training
           </Button>
         }
@@ -872,7 +1024,7 @@ const EmployeeDashboard = () => {
               title: 'Date',
               dataIndex: 'date',
               key: 'date',
-              render: (date) => dayjs(date).format('MMM D, YYYY')
+              render: (date) => date ? dayjs(date).format('MMM D, YYYY') : 'N/A'
             },
             {
               title: 'Status',
@@ -889,12 +1041,12 @@ const EmployeeDashboard = () => {
     </div>
   );
 
-  const EpfEtfTab = ({ epfEtfRequests, onApplyEpfEtf, getStatusColor }) => (
+  const EpfEtfTab = () => (
     <div>
       <Card
         title="EPF/ETF Applications"
         extra={
-          <Button type="primary" icon={<PlusOutlined />} onClick={onApplyEpfEtf}>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setEpfModalVisible(true)}>
             Apply for EPF/ETF
           </Button>
         }
@@ -938,7 +1090,7 @@ const EmployeeDashboard = () => {
     </div>
   );
 
-  const TeamTab = ({ teamMembers }) => (
+  const TeamTab = () => (
     <div>
       <Card title="Team Directory">
         <Table
@@ -987,7 +1139,7 @@ const EmployeeDashboard = () => {
     </div>
   );
 
-  const FeedbackTab = ({ myFeedback, onSubmitFeedback }) => (
+  const FeedbackTab = () => (
     <div>
       <Card
         title="Company Feedback"
@@ -1026,7 +1178,7 @@ const EmployeeDashboard = () => {
               title: 'Submitted',
               dataIndex: 'submitted_at',
               key: 'submitted_at',
-              render: (date) => dayjs(date).format('MMM D, YYYY')
+              render: (date) => date ? dayjs(date).format('MMM D, YYYY') : 'N/A'
             }
           ]}
           pagination={{ pageSize: 10 }}
@@ -1037,7 +1189,7 @@ const EmployeeDashboard = () => {
     </div>
   );
 
-  const ProfileTab = ({ profileData, onUpdateProfile }) => (
+  const ProfileTab = () => (
     <div>
       <Card
         title="My Profile"
@@ -1051,20 +1203,20 @@ const EmployeeDashboard = () => {
         }
       >
         <Descriptions bordered column={2}>
-          <Descriptions.Item label="Employee ID">{profileData.empid}</Descriptions.Item>
-          <Descriptions.Item label="Name">{profileData.full_name}</Descriptions.Item>
-          <Descriptions.Item label="Email">{profileData.email}</Descriptions.Item>
-          <Descriptions.Item label="Phone">{profileData.phone}</Descriptions.Item>
-          <Descriptions.Item label="Role">{profileData.role}</Descriptions.Item>
-          <Descriptions.Item label="Department">{profileData.department}</Descriptions.Item>
+          <Descriptions.Item label="Employee ID">{profileData.empid || 'N/A'}</Descriptions.Item>
+          <Descriptions.Item label="Name">{profileData.full_name || 'N/A'}</Descriptions.Item>
+          <Descriptions.Item label="Email">{profileData.email || 'N/A'}</Descriptions.Item>
+          <Descriptions.Item label="Phone">{profileData.phone || 'N/A'}</Descriptions.Item>
+          <Descriptions.Item label="Role">{profileData.role || 'N/A'}</Descriptions.Item>
+          <Descriptions.Item label="Department">{profileData.department || 'N/A'}</Descriptions.Item>
           <Descriptions.Item label="Date of Birth">
             {profileData.dob ? dayjs(profileData.dob).format('MMM D, YYYY') : 'N/A'}
           </Descriptions.Item>
-          <Descriptions.Item label="Address">{profileData.empaddress}</Descriptions.Item>
+          <Descriptions.Item label="Address">{profileData.empaddress || 'N/A'}</Descriptions.Item>
           <Descriptions.Item label="Status">
-            <Tag color={getStatusColor(profileData.status)}>{profileData.status}</Tag>
+            <Tag color={getStatusColor(profileData.status)}>{profileData.status || 'N/A'}</Tag>
           </Descriptions.Item>
-          <Descriptions.Item label="Tenure">{profileData.tenure}</Descriptions.Item>
+          <Descriptions.Item label="Tenure">{profileData.tenure || 'N/A'}</Descriptions.Item>
         </Descriptions>
       </Card>
     </div>
@@ -1075,115 +1227,83 @@ const EmployeeDashboard = () => {
     {
       key: 'overview',
       label: 'Overview',
-      children: (
-        <OverviewTab
-          profile={profile}
-          myTasks={myTasks}
-          myLeaves={myLeaves}
-          attendanceData={attendanceData}
-          salaryData={salaryData}
-          leaveBalance={leaveBalance}
-          getStatusColor={getStatusColor}
-          onMarkAttendance={() => setAttendanceModalVisible(true)}
-          onApplyLeave={() => setLeaveModalVisible(true)}
-          onGenerateReport={generateReport}
-        />
-      )
+      children: <OverviewTab />
     },
     {
       key: 'leaves',
       label: 'Leaves',
-      children: (
-        <LeavesTab
-          myLeaves={myLeaves}
-          leaveBalance={leaveBalance}
-          onApplyLeave={() => setLeaveModalVisible(true)}
-          getStatusColor={getStatusColor}
-        />
-      )
+      children: <LeavesTab />
     },
     {
       key: 'attendance',
       label: 'Attendance',
-      children: (
-        <AttendanceTab
-          attendanceData={attendanceData}
-          onMarkAttendance={() => setAttendanceModalVisible(true)}
-        />
-      )
+      children: <AttendanceTab />
     },
     {
       key: 'profile',
       label: 'My Profile',
-      children: (
-        <ProfileTab 
-          profileData={profileData} 
-          onUpdateProfile={handleUpdateProfile} 
-        />
-      )
+      children: <ProfileTab />
     },
     {
       key: 'documents',
       label: 'Documents',
-      children: (
-        <DocumentsTab 
-          documents={documents} 
-          onUploadDocument={() => setDocumentModalVisible(true)} 
-        />
-      )
+      children: <DocumentsTab />
     },
     {
       key: 'loans',
       label: 'Loans',
-      children: (
-        <LoansTab
-          loanRequests={loanRequests}
-          onApplyLoan={() => setLoanModalVisible(true)}
-          getStatusColor={getStatusColor}
-        />
-      )
+      children: <LoansTab />
     },
     {
       key: 'training',
       label: 'Training',
-      children: (
-        <TrainingTab
-          trainingRequests={trainingRequests}
-          onRequestTraining={() => setTrainingModalVisible(true)}
-          getStatusColor={getStatusColor}
-        />
-      )
+      children: <TrainingTab />
     },
     {
       key: 'epf-etf',
       label: 'EPF/ETF',
-      children: (
-        <EpfEtfTab
-          epfEtfRequests={epfEtfRequests}
-          onApplyEpfEtf={() => setEpfModalVisible(true)}
-          getStatusColor={getStatusColor}
-        />
-      )
+      children: <EpfEtfTab />
     },
     {
       key: 'feedback',
       label: 'Feedback',
-      children: (
-        <FeedbackTab
-          myFeedback={myFeedback}
-          onSubmitFeedback={handleSubmitFeedback}
-        />
-      )
+      children: <FeedbackTab />
     }
   ];
 
   // Add Team tab for managers
-  if (['manager', 'admin'].includes(profile.role)) {
+  if (profile && ['manager', 'admin', 'undefined'].includes(profile.role)) {
     tabItems.splice(4, 0, {
       key: 'team',
       label: 'Team',
-      children: <TeamTab teamMembers={teamMembers} />
+      children: <TeamTab />
     });
+  }
+
+  // Show loading spinner while profile is loading or dashboard is initializing
+  if (authLoading || (loading && profile)) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+        <Spin size="large" tip="Loading dashboard..." />
+      </div>
+    );
+  }
+
+  // If no profile after auth loading is complete, show error
+  if (!profile && !authLoading) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', flexDirection: 'column' }}>
+        <Alert
+          message="Authentication Error"
+          description="Unable to load your profile. Please try logging in again."
+          type="error"
+          showIcon
+        />
+        <Button type="primary" onClick={() => navigate('/login')} style={{ marginTop: 16 }}>
+          Go to Login
+        </Button>
+      </div>
+    );
   }
 
   return (
@@ -1196,38 +1316,38 @@ const EmployeeDashboard = () => {
           </Col>
           <Col flex={1}>
             <Title level={2} style={{ margin: 0 }}>
-              Welcome back, {profile.full_name}!
+              Welcome back, {profile?.full_name || 'Employee'}!
             </Title>
             <Text type="secondary">
-              {profile.role} • {profile.department} • Employee ID: {profile.empid}
+              {profile?.role || 'Employee'} • {profile?.department || 'Department'} • Employee ID: {profile?.empid || 'N/A'}
             </Text>
           </Col>
           <Col>
             <Space>
-              <Button 
-                type="primary" 
+              <Button
+                type="primary"
                 icon={<LineChartOutlined />}
                 onClick={() => setReportModalVisible(true)}
               >
                 Generate Report
               </Button>
-              <Button 
+              <Button
                 icon={<SearchOutlined />}
                 onClick={() => setEmployeeSearchModalVisible(true)}
               >
                 Search Employee
               </Button>
-              {['manager', 'admin'].includes(profile.role) && (
-                <Button 
-                  type="dashed" 
+              {profile && ['manager', 'admin', 'undefined'].includes(profile.role) && (
+                <Button
+                  type="dashed"
                   icon={<TeamOutlined />}
                   onClick={handleRoleNavigation}
                 >
-                  Switch to {profile.role === 'manager' ? 'Manager' : 'Admin'} View
+                  Switch to {profile.role === 'manager' ? 'Manager' : profile.role === 'admin' ? 'Admin' : 'Default'} View
                 </Button>
               )}
-              <Button 
-                danger 
+              <Button
+                danger
                 icon={<LogoutOutlined />}
                 onClick={logout}
               >
@@ -1277,7 +1397,7 @@ const EmployeeDashboard = () => {
               <Option value="documents">Documents Report</Option>
             </Select>
           </Form.Item>
-          
+
           <Form.Item label="Date Range" required>
             <RangePicker
               value={dateRange}
@@ -1304,9 +1424,9 @@ const EmployeeDashboard = () => {
           </Form.Item>
 
           <Form.Item label="Employee Selection">
-            <Button 
-              type="dashed" 
-              block 
+            <Button
+              type="dashed"
+              block
               onClick={() => setEmployeeSearchModalVisible(true)}
               icon={<SearchOutlined />}
             >
@@ -1333,13 +1453,9 @@ const EmployeeDashboard = () => {
           placeholder="Search employees by name, email, or employee ID"
           style={{ marginBottom: 16 }}
           onSearch={(value) => {
-            // Filter employees based on search
-            const filtered = allEmployees.filter(emp => 
-              emp.full_name?.toLowerCase().includes(value.toLowerCase()) ||
-              emp.email?.toLowerCase().includes(value.toLowerCase()) ||
-              emp.empid?.toLowerCase().includes(value.toLowerCase())
-            );
-            setAllEmployees(filtered);
+            // In a real app, you would call an API here
+            // For now, we'll just log the search
+            console.log('Searching for:', value);
           }}
         />
         <Table
@@ -1372,8 +1488,8 @@ const EmployeeDashboard = () => {
               title: 'Action',
               key: 'action',
               render: (_, record) => (
-                <Button 
-                  type="link" 
+                <Button
+                  type="link"
                   onClick={() => handleEmployeeSelect(record.empid)}
                 >
                   Select

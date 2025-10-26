@@ -310,11 +310,7 @@ const CEODashboard = () => {
     try {
       const { data: leaveRequests, error: leaveError } = await supabase
         .from('employeeleave')
-        .select(`
-          *,
-          employee:empid (first_name, last_name, role, department),
-          leavetype:leavetypeid (leavetype)
-        `)
+        .select('*')
         .eq('leavestatus', 'pending')
         .order('created_at', { ascending: false });
 
@@ -322,32 +318,83 @@ const CEODashboard = () => {
 
       const { data: loanRequests, error: loanError } = await supabase
         .from('loanrequest')
-        .select(`
-          *,
-          employee:empid (first_name, last_name, role, department),
-          loantype:loantypeid (loantype)
-        `)
+        .select('*')
         .eq('status', 'pending')
         .order('created_at', { ascending: false });
 
       if (loanError) throw loanError;
 
+      // Fetch employee data for leaves
+      const leaveEmpIds = [...new Set(leaveRequests?.map(l => l.empid).filter(Boolean))];
+      const loanEmpIds = [...new Set(loanRequests?.map(l => l.empid).filter(Boolean))];
+      const allEmpIds = [...new Set([...leaveEmpIds, ...loanEmpIds])];
+
+      let employeeData = [];
+      if (allEmpIds.length > 0) {
+        const { data: empData } = await supabase
+          .from('employee')
+          .select('empid, full_name, role, department')
+          .in('empid', allEmpIds);
+        employeeData = empData || [];
+      }
+
+      // Fetch leave types
+      const leaveTypeIds = [...new Set(leaveRequests?.map(l => l.leavetypeid).filter(Boolean))];
+      let leaveTypeData = [];
+      if (leaveTypeIds.length > 0) {
+        const { data: ltData } = await supabase
+          .from('leavetype')
+          .select('leavetypeid, leavetype')
+          .in('leavetypeid', leaveTypeIds);
+        leaveTypeData = ltData || [];
+      }
+
+      // Fetch loan types
+      const loanTypeIds = [...new Set(loanRequests?.map(l => l.loantypeid).filter(Boolean))];
+      let loanTypeData = [];
+      if (loanTypeIds.length > 0) {
+        const { data: ltData } = await supabase
+          .from('loantype')
+          .select('loantypeid, loantype')
+          .in('loantypeid', loanTypeIds);
+        loanTypeData = ltData || [];
+      }
+
+      const employeeMap = {};
+      employeeData.forEach(emp => {
+        employeeMap[emp.empid] = emp;
+      });
+
+      const leaveTypeMap = {};
+      leaveTypeData.forEach(lt => {
+        leaveTypeMap[lt.leavetypeid] = lt;
+      });
+
+      const loanTypeMap = {};
+      loanTypeData.forEach(lt => {
+        loanTypeMap[lt.loantypeid] = lt;
+      });
+
       const approvals = [
         ...(leaveRequests || []).map(req => ({
           ...req,
           type: 'leave',
-          title: `Leave Request - ${req.employee.first_name} ${req.employee.last_name}`,
-          description: `${req.leavetype?.leavetype} - ${req.duration} days`,
-          employee_name: `${req.employee.first_name} ${req.employee.last_name}`,
-          employee_role: req.employee.role
+          title: `Leave Request - ${employeeMap[req.empid]?.full_name || 'Unknown'}`,
+          description: `${leaveTypeMap[req.leavetypeid]?.leavetype || 'Unknown'} - ${req.duration || 0} days`,
+          employee_name: employeeMap[req.empid]?.full_name || 'Unknown',
+          employee_role: employeeMap[req.empid]?.role || 'Unknown',
+          employee: employeeMap[req.empid] || { full_name: 'Unknown', role: 'Unknown', department: 'Unknown' },
+          leavetype: leaveTypeMap[req.leavetypeid] || { leavetype: 'Unknown' }
         })),
         ...(loanRequests || []).map(req => ({
           ...req,
           type: 'loan',
-          title: `Loan Request - ${req.employee.first_name} ${req.employee.last_name}`,
-          description: `$${req.amount} - ${req.loantype?.loantype}`,
-          employee_name: `${req.employee.first_name} ${req.employee.last_name}`,
-          employee_role: req.employee.role
+          title: `Loan Request - ${employeeMap[req.empid]?.full_name || 'Unknown'}`,
+          description: `$${req.amount || 0} - ${loanTypeMap[req.loantypeid]?.loantype || 'Unknown'}`,
+          employee_name: employeeMap[req.empid]?.full_name || 'Unknown',
+          employee_role: employeeMap[req.empid]?.role || 'Unknown',
+          employee: employeeMap[req.empid] || { full_name: 'Unknown', role: 'Unknown', department: 'Unknown' },
+          loantype: loanTypeMap[req.loantypeid] || { loantype: 'Unknown' }
         }))
       ];
 
@@ -355,6 +402,7 @@ const CEODashboard = () => {
     } catch (error) {
       console.error('Error fetching pending approvals:', error);
       message.error('Failed to fetch pending approvals');
+      setPendingApprovals([]);
     }
   };
 
@@ -364,7 +412,7 @@ const CEODashboard = () => {
         .from('employee')
         .select('*')
         .eq('is_active', true)
-        .order('first_name', { ascending: true });
+        .order('full_name', { ascending: true });
 
       if (error) throw error;
       setAllEmployees(data || []);
@@ -411,8 +459,8 @@ const CEODashboard = () => {
         .from('tasks')
         .select(`
           *,
-          assignee:assignee_id (first_name, last_name, role),
-          creator:created_by (first_name, last_name)
+          assignee:assignee_id (full_name, role),
+          creator:created_by (full_name,)
         `)
         .order('due_date', { ascending: true })
         .limit(10);
@@ -709,7 +757,7 @@ const CEODashboard = () => {
             rating: values.rating,
             type: values.feedback_type,
             date: dayjs().format('YYYY-MM-DD'),
-            employee_name: `${selectedEmployee.first_name} ${selectedEmployee.last_name}`
+            employee_name: `${selectedEmployee.full_name}`
           }
         }])
         .select();
@@ -726,43 +774,62 @@ const CEODashboard = () => {
     }
   };
 
-  // Promotion Management
   const promoteEmployee = async (values) => {
     try {
+      // Validate input
+      if (!values.employee_id || !values.new_position) {
+        message.error('Employee and new position are required');
+        return;
+      }
+
+      const salaryIncrease = parseFloat(values.salary_increase) || 0;
+      if (salaryIncrease < 0) {
+        message.error('Salary increase cannot be negative');
+        return;
+      }
+
       // First update employee record
       const { error: employeeError } = await supabase
         .from('employee')
         .update({
           role: values.new_position,
-          department: values.department
+          department: values.department,
+          updated_at: new Date().toISOString()
         })
         .eq('empid', values.employee_id);
 
       if (employeeError) throw employeeError;
 
-      // Then create promotion record
-      const { data: promotion, error: promotionError } = await supabase
-        .from('promotion')
-        .insert([{
-          empid: values.employee_id,
-          oldposition: values.current_position,
-          newposition: values.new_position,
-          promotiondate: dayjs().format('YYYY-MM-DD'),
-          salaryincrease: values.salary_increase,
-          department: values.department
-        }])
-        .select();
+      // Then create promotion record (check if table exists)
+      try {
+        const { data: promotion, error: promotionError } = await supabase
+          .from('promotion')
+          .insert([{
+            empid: values.employee_id,
+            oldposition: values.current_position || 'Unknown',
+            newposition: values.new_position,
+            promotiondate: dayjs().format('YYYY-MM-DD'),
+            salaryincrease: Math.round(salaryIncrease),
+            department: values.department
+          }])
+          .select();
 
-      if (promotionError) throw promotionError;
+        if (promotionError) {
+          console.warn('Promotion table insert failed:', promotionError);
+        }
+      } catch (promError) {
+        console.warn('Promotion record creation failed:', promError);
+      }
 
       // Log promotion history
       await supabase
         .from('promotion_history')
         .insert([{
           empid: values.employee_id,
-          previousrole: values.current_position,
+          previousrole: values.current_position || 'Unknown',
           newrole: values.new_position,
-          promotedby: profile.empid
+          promotedby: profile?.empid,
+          promotion_date: new Date().toISOString()
         }]);
 
       message.success('Employee promoted successfully!');
@@ -786,15 +853,15 @@ const CEODashboard = () => {
   const exportToWord = async (data, filename, title) => {
     const tableRows = [
       new TableRow({
-        children: Object.keys(data[0] || {}).map(key => 
+        children: Object.keys(data[0] || {}).map(key =>
           new TableCell({
             children: [new Paragraph({ text: key, bold: true })]
           })
         )
       }),
-      ...data.map(row => 
+      ...data.map(row =>
         new TableRow({
-          children: Object.values(row).map(value => 
+          children: Object.values(row).map(value =>
             new TableCell({
               children: [new Paragraph({ text: String(value || '') })]
             })
@@ -907,13 +974,13 @@ const CEODashboard = () => {
       .from('salary')
       .select(`
         *,
-        employee:empid (first_name, last_name, department, role)
+        employee:empid (full_name, department, role)
       `)
       .gte('salarydate', config.startDate)
       .lte('salarydate', config.endDate);
 
     const chartData = data?.map(item => ({
-      type: `${item.employee?.first_name} ${item.employee?.last_name}`,
+      type: `${item.employee?.full_name}`,
       value: item.totalsalary || 0
     })) || [];
 
@@ -938,11 +1005,11 @@ const CEODashboard = () => {
   const generatePerformanceReport = async (config) => {
     const { data } = await supabase
       .from('employee')
-      .select('empid, first_name, last_name, department, kpiscore, satisfaction_score, role')
+      .select('empid, full_name, department, kpiscore, satisfaction_score, role')
       .eq('is_active', true);
 
     const chartData = data?.map(item => ({
-      type: `${item.first_name} ${item.last_name}`,
+      type: `${item.full_name}`,
       value: item.kpiscore || 0
     })) || [];
 
@@ -954,7 +1021,7 @@ const CEODashboard = () => {
       .from('attendance')
       .select(`
         *,
-        employee:empid (first_name, last_name, department)
+        employee:empid (full_name, role)
       `)
       .gte('date', config.startDate)
       .lte('date', config.endDate);
@@ -977,7 +1044,7 @@ const CEODashboard = () => {
       .from('employeeleave')
       .select(`
         *,
-        employee:empid (first_name, last_name, department),
+        employee:empid (full_name, role),
         leavetype:leavetypeid (leavetype)
       `)
       .gte('leavefromdate', config.startDate)
@@ -999,11 +1066,11 @@ const CEODashboard = () => {
   const generateKPIReport = async (config) => {
     const { data } = await supabase
       .from('employee')
-      .select('empid, first_name, last_name, department, kpiscore, role')
+      .select('empid, full_name, kpiscore, role')
       .eq('is_active', true);
 
     const chartData = data?.map(item => ({
-      type: `${item.first_name} ${item.last_name}`,
+      type: `${item.full_name}`,
       value: item.kpiscore || 0
     })) || [];
 
@@ -1048,8 +1115,7 @@ const CEODashboard = () => {
 
   // Filter employees based on search
   const filteredEmployees = allEmployees.filter(employee =>
-    employee.first_name?.toLowerCase().includes(searchText.toLowerCase()) ||
-    employee.last_name?.toLowerCase().includes(searchText.toLowerCase()) ||
+    employee.full_name?.toLowerCase().includes(searchText.toLowerCase()) ||
     employee.department?.toLowerCase().includes(searchText.toLowerCase()) ||
     employee.role?.toLowerCase().includes(searchText.toLowerCase())
   );
@@ -1130,15 +1196,15 @@ const CEODashboard = () => {
   const employeeColumns = [
     {
       title: 'Employee',
-      dataIndex: 'first_name',
+      dataIndex: 'full_name',
       key: 'name',
       render: (text, record) => (
         <Space>
           <Avatar size="small" style={{ backgroundColor: '#1890ff' }}>
-            {record.first_name?.[0]}{record.last_name?.[0]}
+            {record.full_name?.[0]}
           </Avatar>
           <div>
-            <Text strong>{record.first_name} {record.last_name}</Text>
+            <Text strong>{record.full_name}</Text>
             <br />
             <Text type="secondary" style={{ fontSize: '12px' }}>{record.role}</Text>
           </div>
@@ -1298,7 +1364,7 @@ const CEODashboard = () => {
       title: 'Assignee',
       key: 'assignee',
       render: (record) => (
-        <Text>{record.assignee?.first_name} {record.assignee?.last_name}</Text>
+        <Text>{record.assignee?.full_name}</Text>
       )
     },
     {
@@ -1458,7 +1524,7 @@ const CEODashboard = () => {
                   <CrownOutlined style={{ marginRight: 12, color: '#faad14' }} />
                   CEO Dashboard
                 </Title>
-                <Text type="secondary">Welcome back, {profile?.first_name} {profile?.last_name}</Text>
+                <Text type="secondary">Welcome back, {profile?.full_name}</Text>
               </Col>
               <Col>
                 <Space>
@@ -1801,7 +1867,7 @@ const CEODashboard = () => {
                 <Select placeholder="Select employee">
                   {allEmployees.map(emp => (
                     <Option key={emp.empid} value={emp.empid}>
-                      {emp.first_name} {emp.last_name} - {emp.role}
+                      {emp.full_name} - {emp.role}
                     </Option>
                   ))}
                 </Select>
@@ -1861,7 +1927,7 @@ const CEODashboard = () => {
           <Form form={feedbackForm} layout="vertical" onFinish={giveFeedback}>
             <Form.Item label="Employee">
               <Input
-                value={`${selectedEmployee.first_name} ${selectedEmployee.last_name}`}
+                value={`${selectedEmployee.full_name}`}
                 disabled
               />
             </Form.Item>
@@ -1926,7 +1992,7 @@ const CEODashboard = () => {
             <Select placeholder="Select specific employee" allowClear>
               {allEmployees.map(emp => (
                 <Option key={emp.empid} value={emp.empid}>
-                  {emp.first_name} {emp.last_name} - {emp.role}
+                  {emp.full_name} - {emp.role}
                 </Option>
               ))}
             </Select>
@@ -2295,7 +2361,7 @@ const CEODashboard = () => {
             </Form.Item>
             <Form.Item label="Current Employee">
               <Input
-                value={`${selectedEmployee.first_name} ${selectedEmployee.last_name}`}
+                value={`${selectedEmployee.full_name}`}
                 disabled
               />
             </Form.Item>

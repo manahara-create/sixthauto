@@ -3,9 +3,7 @@ import {
   Row, Col, Card, Statistic, Table, Button, Space, Tag,
   Modal, Form, Input, Select, DatePicker, message, Tabs,
   Descriptions, Alert, Progress, List, Avatar, Divider,
-  Tooltip, Popconfirm, InputNumber, Switch, Upload, Radio,
-  Timeline, Badge, Drawer, Collapse, Tree, Cascader, TimePicker,
-  Steps, Rate, Slider, Checkbox
+  Tooltip, Popconfirm, InputNumber, Switch
 } from 'antd';
 import {
   TeamOutlined, UserOutlined, SettingOutlined,
@@ -14,28 +12,16 @@ import {
   MailOutlined, PhoneOutlined, CalendarOutlined,
   DollarOutlined, PieChartOutlined, FileTextOutlined,
   CheckCircleOutlined, CloseCircleOutlined, SyncOutlined,
-  RocketOutlined, GiftOutlined, CalculatorOutlined,
-  BankOutlined, CrownOutlined, SecurityScanOutlined,
-  AuditOutlined, FundOutlined, BarChartOutlined as ChartOutlined,
-  UploadOutlined, InboxOutlined, StarOutlined,
-  ClockCircleOutlined, EnvironmentOutlined, IdcardOutlined,
-  SolutionOutlined, TrophyOutlined, RiseOutlined,
-  FallOutlined, PercentageOutlined, MoneyCollectOutlined,
-  FilterOutlined, DownloadOutlined, FileExcelOutlined, FileWordOutlined
+  RocketOutlined, FilterOutlined, DownloadOutlined, FileExcelOutlined
 } from '@ant-design/icons';
 
 import { supabase } from '../../services/supabase';
 import dayjs from 'dayjs';
 import * as XLSX from 'xlsx';
-import { Document, Packer, Paragraph, Table as DocTable, TableCell, TableRow, TextRun } from 'docx';
-import { saveAs } from 'file-saver';
 
 const { TabPane } = Tabs;
 const { Option } = Select;
 const { TextArea } = Input;
-const { Panel } = Collapse;
-const { Step } = Steps;
-const { Dragger } = Upload;
 const { RangePicker } = DatePicker;
 
 const AdminDashboard = () => {
@@ -58,18 +44,6 @@ const AdminDashboard = () => {
   const [isAddUserModalVisible, setIsAddUserModalVisible] = useState(false);
   const [isEditUserModalVisible, setIsEditUserModalVisible] = useState(false);
   const [isLeaveModalVisible, setIsLeaveModalVisible] = useState(false);
-  const [isAttendanceModalVisible, setIsAttendanceModalVisible] = useState(false);
-  const [isSalaryModalVisible, setIsSalaryModalVisible] = useState(false);
-  const [isLoanModalVisible, setIsLoanModalVisible] = useState(false);
-  const [isKPIModalVisible, setIsKPIModalVisible] = useState(false);
-  const [isEpfEtfModalVisible, setIsEpfEtfModalVisible] = useState(false);
-  const [isTrainingModalVisible, setIsTrainingModalVisible] = useState(false);
-  const [isPromotionModalVisible, setIsPromotionModalVisible] = useState(false);
-  const [isBonusModalVisible, setIsBonusModalVisible] = useState(false);
-  const [isIncrementModalVisible, setIsIncrementModalVisible] = useState(false);
-  const [isTaskModalVisible, setIsTaskModalVisible] = useState(false);
-  const [isMeetingModalVisible, setIsMeetingModalVisible] = useState(false);
-  const [isFeedbackModalVisible, setIsFeedbackModalVisible] = useState(false);
   const [isEmployeeDetailVisible, setIsEmployeeDetailVisible] = useState(false);
   const [isDateRangeModalVisible, setIsDateRangeModalVisible] = useState(false);
   
@@ -80,18 +54,6 @@ const AdminDashboard = () => {
   const [userForm] = Form.useForm();
   const [editUserForm] = Form.useForm();
   const [leaveForm] = Form.useForm();
-  const [attendanceForm] = Form.useForm();
-  const [salaryForm] = Form.useForm();
-  const [loanForm] = Form.useForm();
-  const [kpiForm] = Form.useForm();
-  const [epfEtfForm] = Form.useForm();
-  const [trainingForm] = Form.useForm();
-  const [promotionForm] = Form.useForm();
-  const [bonusForm] = Form.useForm();
-  const [incrementForm] = Form.useForm();
-  const [taskForm] = Form.useForm();
-  const [meetingForm] = Form.useForm();
-  const [feedbackForm] = Form.useForm();
   const [dateRangeForm] = Form.useForm();
 
   // Data states
@@ -99,14 +61,6 @@ const AdminDashboard = () => {
   const [loanRequests, setLoanRequests] = useState([]);
   const [attendanceData, setAttendanceData] = useState([]);
   const [salaryData, setSalaryData] = useState([]);
-  const [kpiData, setKpiData] = useState([]);
-  const [trainingRequests, setTrainingRequests] = useState([]);
-  const [promotionRequests, setPromotionRequests] = useState([]);
-  const [epfEtfData, setEpfEtfData] = useState([]);
-  const [performanceData, setPerformanceData] = useState([]);
-  const [tasks, setTasks] = useState([]);
-  const [meetings, setMeetings] = useState([]);
-  const [selectedEmployeeDetail, setSelectedEmployeeDetail] = useState(null);
 
   useEffect(() => {
     initializeDashboard();
@@ -129,15 +83,8 @@ const AdminDashboard = () => {
           fetchLoanRequests(),
           fetchAttendanceData(),
           fetchSalaryData(),
-          fetchKPIData(),
-          fetchTrainingRequests(),
-          fetchPromotionRequests(),
-          fetchEpfEtfData(),
-          fetchPerformanceData(),
           fetchLeaveTypes(),
-          fetchLoanTypes(),
-          fetchTasks(),
-          fetchMeetings()
+          fetchLoanTypes()
         ]);
       }
     } catch (error) {
@@ -148,7 +95,7 @@ const AdminDashboard = () => {
     }
   };
 
-  // Data fetching functions with date range
+  // Data fetching functions
   const fetchSystemStats = async () => {
     try {
       const { data: employees } = await supabase
@@ -277,51 +224,125 @@ const AdminDashboard = () => {
     }
   };
 
-  const fetchLeaveRequests = async () => {
-    try {
-      const startDate = dateRange[0].format('YYYY-MM-DD');
-      const endDate = dateRange[1].format('YYYY-MM-DD');
+const fetchLeaveRequests = async () => {
+  try {
+    const startDate = dateRange[0].format('YYYY-MM-DD');
+    const endDate = dateRange[1].format('YYYY-MM-DD');
 
-      const { data, error } = await supabase
-        .from('employeeleave')
-        .select(`
-          *,
-          employee:empid (full_name, department),
-          leavetype:leavetypeid (leavetype)
-        `)
-        .gte('created_at', startDate)
-        .lte('created_at', endDate)
-        .order('created_at', { ascending: false });
+    const { data, error } = await supabase
+      .from('employeeleave')
+      .select('*')
+      .gte('created_at', startDate)
+      .lte('created_at', endDate)
+      .order('created_at', { ascending: false });
 
-      if (error) throw error;
-      setLeaveRequests(data || []);
-    } catch (error) {
-      console.error('Error fetching leave requests:', error);
+    if (error) throw error;
+    
+    // Manually join employee data
+    const employeeIds = [...new Set(data?.map(leave => leave.empid).filter(Boolean))];
+    const leaveTypeIds = [...new Set(data?.map(leave => leave.leavetypeid).filter(Boolean))];
+    
+    let employeeData = [];
+    let leaveTypeData = [];
+    
+    if (employeeIds.length > 0) {
+      const { data: empData } = await supabase
+        .from('employee')
+        .select('empid, full_name, department')
+        .in('empid', employeeIds);
+      employeeData = empData || [];
     }
-  };
-
-  const fetchLoanRequests = async () => {
-    try {
-      const startDate = dateRange[0].format('YYYY-MM-DD');
-      const endDate = dateRange[1].format('YYYY-MM-DD');
-
-      const { data, error } = await supabase
-        .from('loanrequest')
-        .select(`
-          *,
-          employee:empid (full_name, department),
-          loantype:loantypeid (loantype)
-        `)
-        .gte('created_at', startDate)
-        .lte('created_at', endDate)
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
-      setLoanRequests(data || []);
-    } catch (error) {
-      console.error('Error fetching loan requests:', error);
+    
+    if (leaveTypeIds.length > 0) {
+      const { data: ltData } = await supabase
+        .from('leavetype')
+        .select('leavetypeid, leavetype')
+        .in('leavetypeid', leaveTypeIds);
+      leaveTypeData = ltData || [];
     }
-  };
+
+    const employeeMap = {};
+    employeeData.forEach(emp => {
+      employeeMap[emp.empid] = emp;
+    });
+
+    const leaveTypeMap = {};
+    leaveTypeData.forEach(lt => {
+      leaveTypeMap[lt.leavetypeid] = lt;
+    });
+
+    const leavesWithDetails = data?.map(leave => ({
+      ...leave,
+      employee: employeeMap[leave.empid] || { full_name: 'Unknown', department: 'Unknown' },
+      leavetype: leaveTypeMap[leave.leavetypeid] || { leavetype: 'Unknown' }
+    }));
+    
+    setLeaveRequests(leavesWithDetails || []);
+  } catch (error) {
+    console.error('Error fetching leave requests:', error);
+    setLeaveRequests([]);
+  }
+};
+
+const fetchLoanRequests = async () => {
+  try {
+    const startDate = dateRange[0].format('YYYY-MM-DD');
+    const endDate = dateRange[1].format('YYYY-MM-DD');
+
+    const { data, error } = await supabase
+      .from('loanrequest')
+      .select('*')
+      .gte('created_at', startDate)
+      .lte('created_at', endDate)
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+    
+    // Manually join data
+    const employeeIds = [...new Set(data?.map(loan => loan.empid).filter(Boolean))];
+    const loanTypeIds = [...new Set(data?.map(loan => loan.loantypeid).filter(Boolean))];
+    
+    let employeeData = [];
+    let loanTypeData = [];
+    
+    if (employeeIds.length > 0) {
+      const { data: empData } = await supabase
+        .from('employee')
+        .select('empid, full_name, department')
+        .in('empid', employeeIds);
+      employeeData = empData || [];
+    }
+    
+    if (loanTypeIds.length > 0) {
+      const { data: ltData } = await supabase
+        .from('loantype')
+        .select('loantypeid, loantype')
+        .in('loantypeid', loanTypeIds);
+      loanTypeData = ltData || [];
+    }
+
+    const employeeMap = {};
+    employeeData.forEach(emp => {
+      employeeMap[emp.empid] = emp;
+    });
+
+    const loanTypeMap = {};
+    loanTypeData.forEach(lt => {
+      loanTypeMap[lt.loantypeid] = lt;
+    });
+
+    const loansWithDetails = data?.map(loan => ({
+      ...loan,
+      employee: employeeMap[loan.empid] || { full_name: 'Unknown', department: 'Unknown' },
+      loantype: loanTypeMap[loan.loantypeid] || { loantype: 'Unknown' }
+    }));
+    
+    setLoanRequests(loansWithDetails || []);
+  } catch (error) {
+    console.error('Error fetching loan requests:', error);
+    setLoanRequests([]);
+  }
+};
 
   const fetchAttendanceData = async () => {
     try {
@@ -330,17 +351,31 @@ const AdminDashboard = () => {
 
       const { data, error } = await supabase
         .from('attendance')
-        .select(`
-          *,
-          employee:empid (full_name, department)
-        `)
+        .select('*')
         .gte('date', startDate)
         .lte('date', endDate)
         .order('date', { ascending: false })
         .limit(50);
 
       if (error) throw error;
-      setAttendanceData(data || []);
+      
+      // Manually join employee data
+      const attendanceWithEmployee = await Promise.all(
+        (data || []).map(async (attendance) => {
+          const { data: employeeData } = await supabase
+            .from('employee')
+            .select('full_name, department')
+            .eq('empid', attendance.empid)
+            .single();
+
+          return {
+            ...attendance,
+            employee: employeeData || { full_name: 'Unknown', department: 'Unknown' }
+          };
+        })
+      );
+      
+      setAttendanceData(attendanceWithEmployee);
     } catch (error) {
       console.error('Error fetching attendance:', error);
     }
@@ -353,172 +388,32 @@ const AdminDashboard = () => {
 
       const { data, error } = await supabase
         .from('salary')
-        .select(`
-          *,
-          employee:empid (full_name, department)
-        `)
+        .select('*')
         .gte('salarydate', startDate)
         .lte('salarydate', endDate)
         .order('salarydate', { ascending: false });
 
       if (error) throw error;
-      setSalaryData(data || []);
+      
+      // Manually join employee data
+      const salaryWithEmployee = await Promise.all(
+        (data || []).map(async (salary) => {
+          const { data: employeeData } = await supabase
+            .from('employee')
+            .select('full_name, department')
+            .eq('empid', salary.empid)
+            .single();
+
+          return {
+            ...salary,
+            employee: employeeData || { full_name: 'Unknown', department: 'Unknown' }
+          };
+        })
+      );
+      
+      setSalaryData(salaryWithEmployee);
     } catch (error) {
       console.error('Error fetching salary data:', error);
-    }
-  };
-
-  const fetchKPIData = async () => {
-    try {
-      const startDate = dateRange[0].format('YYYY-MM-DD');
-      const endDate = dateRange[1].format('YYYY-MM-DD');
-
-      const { data, error } = await supabase
-        .from('kpi')
-        .select(`
-          *,
-          employee:empid (full_name, department)
-        `)
-        .gte('calculatedate', startDate)
-        .lte('calculatedate', endDate)
-        .order('calculatedate', { ascending: false });
-
-      if (error) throw error;
-      setKpiData(data || []);
-    } catch (error) {
-      console.error('Error fetching KPI data:', error);
-    }
-  };
-
-  const fetchTrainingRequests = async () => {
-    try {
-      const startDate = dateRange[0].format('YYYY-MM-DD');
-      const endDate = dateRange[1].format('YYYY-MM-DD');
-
-      const { data, error } = await supabase
-        .from('training')
-        .select(`
-          *,
-          employee:empid (full_name, department)
-        `)
-        .gte('date', startDate)
-        .lte('date', endDate)
-        .order('date', { ascending: false });
-
-      if (error) throw error;
-      setTrainingRequests(data || []);
-    } catch (error) {
-      console.error('Error fetching training requests:', error);
-    }
-  };
-
-  const fetchPromotionRequests = async () => {
-    try {
-      const startDate = dateRange[0].format('YYYY-MM-DD');
-      const endDate = dateRange[1].format('YYYY-MM-DD');
-
-      const { data, error } = await supabase
-        .from('promotion')
-        .select(`
-          *,
-          employee:empid (full_name, department)
-        `)
-        .gte('promotiondate', startDate)
-        .lte('promotiondate', endDate)
-        .order('promotiondate', { ascending: false });
-
-      if (error) throw error;
-      setPromotionRequests(data || []);
-    } catch (error) {
-      console.error('Error fetching promotion requests:', error);
-    }
-  };
-
-  const fetchEpfEtfData = async () => {
-    try {
-      const startDate = dateRange[0].format('YYYY-MM-DD');
-      const endDate = dateRange[1].format('YYYY-MM-DD');
-
-      const { data, error } = await supabase
-        .from('epfnetf')
-        .select(`
-          *,
-          employee:empid (full_name, department)
-        `)
-        .gte('applieddate', startDate)
-        .lte('applieddate', endDate)
-        .order('applieddate', { ascending: false });
-
-      if (error) throw error;
-      setEpfEtfData(data || []);
-    } catch (error) {
-      console.error('Error fetching EPF/ETF data:', error);
-    }
-  };
-
-  const fetchPerformanceData = async () => {
-    try {
-      const startDate = dateRange[0].format('YYYY-MM-DD');
-      const endDate = dateRange[1].format('YYYY-MM-DD');
-
-      const { data, error } = await supabase
-        .from('performance_rating')
-        .select(`
-          *,
-          employee:empid (full_name, department)
-        `)
-        .gte('rating_date', startDate)
-        .lte('rating_date', endDate)
-        .order('rating_date', { ascending: false });
-
-      if (error) throw error;
-      setPerformanceData(data || []);
-    } catch (error) {
-      console.error('Error fetching performance data:', error);
-    }
-  };
-
-  const fetchTasks = async () => {
-    try {
-      const startDate = dateRange[0].format('YYYY-MM-DD');
-      const endDate = dateRange[1].format('YYYY-MM-DD');
-
-      const { data, error } = await supabase
-        .from('tasks')
-        .select(`
-          *,
-          employee:empid (full_name, department)
-        `)
-        .gte('created_at', startDate)
-        .lte('created_at', endDate)
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
-      setTasks(data || []);
-    } catch (error) {
-      console.error('Error fetching tasks:', error);
-    }
-  };
-
-  const fetchMeetings = async () => {
-    try {
-      const startDate = dateRange[0].format('YYYY-MM-DD');
-      const endDate = dateRange[1].format('YYYY-MM-DD');
-
-      const { data, error } = await supabase
-        .from('meeting')
-        .select(`
-          *,
-          employee:empid (full_name, department)
-        `)
-        .gte('date', startDate)
-        .lte('date', endDate)
-        .order('date', { ascending: false });
-
-      if (error) throw error;
-      setMeetings(data || []);
-    } catch (error) {
-      console.error('Error fetching meetings:', error);
     }
   };
 
@@ -536,57 +431,6 @@ const AdminDashboard = () => {
     }
   };
 
-  const exportToWord = async (data, fileName, title) => {
-    try {
-      const tableRows = [
-        new TableRow({
-          children: Object.keys(data[0] || {}).map(key => 
-            new TableCell({
-              children: [new Paragraph({ children: [new TextRun({ text: key, bold: true })] })]
-            })
-          )
-        }),
-        ...data.map(item => 
-          new TableRow({
-            children: Object.values(item).map(value => 
-              new TableCell({
-                children: [new Paragraph({ children: [new TextRun({ text: String(value || '') })] })]
-              })
-            )
-          })
-        )
-      ];
-
-      const doc = new Document({
-        sections: [{
-          properties: {},
-          children: [
-            new Paragraph({
-              children: [new TextRun({ text: title, bold: true, size: 32 })]
-            }),
-            new Paragraph({
-              children: [new TextRun({ 
-                text: `Date Range: ${dateRange[0].format('MMM D, YYYY')} - ${dateRange[1].format('MMM D, YYYY')}`,
-                size: 24 
-              })]
-            }),
-            new Paragraph({ text: "" }),
-            new DocTable({
-              rows: tableRows,
-            })
-          ]
-        }]
-      });
-
-      const blob = await Packer.toBlob(doc);
-      saveAs(blob, `${fileName}_${dayjs().format('YYYY-MM-DD')}.docx`);
-      message.success(`${fileName} exported successfully!`);
-    } catch (error) {
-      console.error('Error exporting to Word:', error);
-      message.error('Failed to export to Word');
-    }
-  };
-
   // Report Generation Functions
   const generateReport = async (type) => {
     try {
@@ -594,7 +438,6 @@ const AdminDashboard = () => {
       
       let reportData = [];
       let fileName = '';
-      let title = '';
 
       switch (type) {
         case 'staff':
@@ -610,7 +453,6 @@ const AdminDashboard = () => {
             'Join Date': dayjs(emp.created_at).format('MMM D, YYYY')
           }));
           fileName = 'Staff_Report';
-          title = 'Staff Report';
           break;
 
         case 'salary':
@@ -625,7 +467,6 @@ const AdminDashboard = () => {
             'Salary Date': salary.salarydate
           }));
           fileName = 'Salary_Report';
-          title = 'Salary Report';
           break;
 
         case 'attendance':
@@ -638,34 +479,6 @@ const AdminDashboard = () => {
             'Status': att.status
           }));
           fileName = 'Attendance_Report';
-          title = 'Attendance Report';
-          break;
-
-        case 'financial':
-          reportData = [
-            ...salaryData.map(s => ({
-              'Type': 'Salary',
-              'Employee': s.employee?.full_name || 'N/A',
-              'Amount': s.totalsalary,
-              'Date': s.salarydate
-            })),
-            ...loanRequests.map(l => ({
-              'Type': 'Loan',
-              'Employee': l.employee?.full_name || 'N/A',
-              'Amount': l.amount,
-              'Status': l.status,
-              'Date': l.date
-            })),
-            ...epfEtfData.map(e => ({
-              'Type': 'EPF/ETF',
-              'Employee': e.employee?.full_name || 'N/A',
-              'EPF': e.epfcalculation,
-              'ETF': e.etfcalculation,
-              'Date': e.applieddate
-            }))
-          ];
-          fileName = 'Financial_Report';
-          title = 'Financial Report';
           break;
 
         case 'leave':
@@ -679,7 +492,6 @@ const AdminDashboard = () => {
             'Reason': leave.leavereason
           }));
           fileName = 'Leave_Report';
-          title = 'Leave Report';
           break;
 
         default:
@@ -687,73 +499,65 @@ const AdminDashboard = () => {
           return;
       }
 
-      // Show export options
-      Modal.confirm({
-        title: `Export ${title}`,
-        content: `Choose export format for ${title}`,
-        okText: 'Excel (XLSX)',
-        cancelText: 'Word (DOCX)',
-        onOk: () => exportToExcel(reportData, fileName),
-        onCancel: () => exportToWord(reportData, fileName, title)
-      });
-
+      exportToExcel(reportData, fileName);
     } catch (error) {
       console.error('Error generating report:', error);
       message.error(error.message || 'Failed to generate report');
     }
   };
 
-  // Handler functions (CRUD operations)
-  const handleAddUser = async (values) => {
-    try {
-      const employeeData = {
-        full_name: `${values.first_name} ${values.last_name}`,
-        email: values.email,
-        role: values.role,
-        department: values.department,
-        phone: values.phone,
-        gender: values.gender,
-        empaddress: values.address,
-        status: 'Active',
-        is_active: true,
-        basicsalary: values.basicsalary || 0,
-        created_at: new Date().toISOString()
-      };
-
-      const { data, error } = await supabase
-        .from('employee')
-        .insert([employeeData])
-        .select();
-
-      if (error) throw error;
-
-      // Create auth user record
-      await supabase
-        .from('auth_users')
-        .insert([{
-          email: values.email,
-          role: values.role,
-          is_active: true,
-          full_name: employeeData.full_name
-        }]);
-
-      message.success('User created successfully!');
-      setIsAddUserModalVisible(false);
-      userForm.resetFields();
-      fetchAllEmployees();
-      fetchSystemStats();
-    } catch (error) {
-      console.error('Error adding user:', error);
-      message.error(error.message || 'Failed to add user');
+const handleAddUser = async (values) => {
+  try {
+    // Validate required fields
+    if (!values.full_name || !values.email) {
+      message.error('Name and email are required');
+      return;
     }
-  };
+
+    const employeeData = {
+      full_name: values.full_name.trim(),
+      email: values.email.trim().toLowerCase(),
+      role: values.role || 'employee',
+      department: values.department || 'AUTOMOTIVE',
+      phone: values.phone?.trim() || null,
+      gender: values.gender || null,
+      empaddress: values.address?.trim() || null,
+      status: 'Active',
+      is_active: true,
+      basicsalary: parseFloat(values.basicsalary) || 0,
+      created_at: new Date().toISOString()
+    };
+
+    // Validate basic salary
+    if (employeeData.basicsalary < 0) {
+      message.error('Basic salary cannot be negative');
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from('employee')
+      .insert([employeeData])
+      .select();
+
+    if (error) throw error;
+
+    message.success('User created successfully!');
+    setIsAddUserModalVisible(false);
+    userForm.resetFields();
+    fetchAllEmployees();
+    fetchSystemStats();
+  } catch (error) {
+    console.error('Error adding user:', error);
+    message.error(error.message || 'Failed to add user');
+  }
+};
 
   const handleEditUser = async (values) => {
     try {
       if (!selectedEmployee) return;
 
       const updates = {
-        full_name: `${values.first_name} ${values.last_name}`,
+        full_name: values.full_name,
         email: values.email,
         role: values.role,
         department: values.department,
@@ -773,17 +577,6 @@ const AdminDashboard = () => {
 
       if (error) throw error;
 
-      // Update auth user
-      await supabase
-        .from('auth_users')
-        .update({
-          email: values.email,
-          role: values.role,
-          is_active: values.is_active,
-          full_name: updates.full_name
-        })
-        .eq('email', selectedEmployee.email);
-
       message.success('User updated successfully!');
       setIsEditUserModalVisible(false);
       setSelectedEmployee(null);
@@ -802,12 +595,6 @@ const AdminDashboard = () => {
         .eq('empid', employee.empid);
 
       if (error) throw error;
-
-      // Deactivate auth user
-      await supabase
-        .from('auth_users')
-        .update({ is_active: false })
-        .eq('email', employee.email);
 
       message.success('User deactivated successfully!');
       fetchAllEmployees();
@@ -849,352 +636,6 @@ const AdminDashboard = () => {
     }
   };
 
-  const handleMarkAttendance = async (values) => {
-    try {
-      const attendanceData = {
-        empid: values.empid,
-        date: values.date.format('YYYY-MM-DD'),
-        intime: values.intime.format('HH:mm'),
-        outtime: values.outtime ? values.outtime.format('HH:mm') : null,
-        status: values.status,
-        created_at: new Date().toISOString()
-      };
-
-      const { error } = await supabase
-        .from('attendance')
-        .insert([attendanceData]);
-
-      if (error) throw error;
-
-      message.success('Attendance marked successfully!');
-      setIsAttendanceModalVisible(false);
-      attendanceForm.resetFields();
-      fetchAttendanceData();
-    } catch (error) {
-      console.error('Error marking attendance:', error);
-      message.error('Failed to mark attendance');
-    }
-  };
-
-  const handleProcessSalary = async (values) => {
-    try {
-      const totalSalary = values.basicsalary + (values.otpay || 0) + (values.incrementpay || 0) + (values.bonuspay || 0);
-      
-      const salaryData = {
-        empid: values.empid,
-        basicsalary: values.basicsalary,
-        otpay: values.otpay || 0,
-        incrementpay: values.incrementpay || 0,
-        bonuspay: values.bonuspay || 0,
-        totalsalary: totalSalary,
-        salarydate: values.salarydate.format('YYYY-MM-DD'),
-        processed_by: user?.id,
-        created_at: new Date().toISOString()
-      };
-
-      const { error } = await supabase
-        .from('salary')
-        .insert([salaryData]);
-
-      if (error) throw error;
-
-      message.success('Salary processed successfully!');
-      setIsSalaryModalVisible(false);
-      salaryForm.resetFields();
-      fetchSalaryData();
-    } catch (error) {
-      console.error('Error processing salary:', error);
-      message.error('Failed to process salary');
-    }
-  };
-
-  const handleProcessLoan = async (values) => {
-    try {
-      const loanData = {
-        empid: values.empid,
-        loantypeid: values.loantypeid,
-        amount: values.amount,
-        duration: values.duration,
-        interestrate: values.interestrate,
-        date: values.date.format('YYYY-MM-DD'),
-        status: 'approved',
-        processedby: user?.id,
-        processedat: new Date().toISOString(),
-        created_at: new Date().toISOString()
-      };
-
-      const { error } = await supabase
-        .from('loanrequest')
-        .insert([loanData]);
-
-      if (error) throw error;
-
-      message.success('Loan processed successfully!');
-      setIsLoanModalVisible(false);
-      loanForm.resetFields();
-      fetchLoanRequests();
-      fetchSystemStats();
-    } catch (error) {
-      console.error('Error processing loan:', error);
-      message.error('Failed to process loan');
-    }
-  };
-
-  const handleUpdateKPI = async (values) => {
-    try {
-      const kpiData = {
-        empid: values.empid,
-        kpivalue: values.kpivalue,
-        calculatedate: values.calculatedate.format('YYYY-MM-DD'),
-        kpiyear: values.calculatedate.year(),
-        created_at: new Date().toISOString()
-      };
-
-      const { error } = await supabase
-        .from('kpi')
-        .insert([kpiData]);
-
-      if (error) throw error;
-
-      message.success('KPI updated successfully!');
-      setIsKPIModalVisible(false);
-      kpiForm.resetFields();
-      fetchKPIData();
-    } catch (error) {
-      console.error('Error updating KPI:', error);
-      message.error('Failed to update KPI');
-    }
-  };
-
-  const handleCalculateEPFETF = async (values) => {
-    try {
-      const epfEtfData = {
-        empid: values.empid,
-        basicsalary: values.basicsalary,
-        epfcalculation: values.basicsalary * 0.08,
-        etfcalculation: values.basicsalary * 0.03,
-        applieddate: new Date().toISOString(),
-        processedby: user?.id,
-        created_at: new Date().toISOString()
-      };
-
-      const { error } = await supabase
-        .from('epfnetf')
-        .insert([epfEtfData]);
-
-      if (error) throw error;
-
-      message.success('EPF/ETF calculated successfully!');
-      setIsEpfEtfModalVisible(false);
-      epfEtfForm.resetFields();
-      fetchEpfEtfData();
-    } catch (error) {
-      console.error('Error calculating EPF/ETF:', error);
-      message.error('Failed to calculate EPF/ETF');
-    }
-  };
-
-  const handleAddTraining = async (values) => {
-    try {
-      const trainingData = {
-        empid: values.empid,
-        topic: values.topic,
-        trainer: values.trainer,
-        venue: values.venue,
-        duration: values.duration,
-        date: values.date.format('YYYY-MM-DD'),
-        status: 'scheduled',
-        created_at: new Date().toISOString()
-      };
-
-      const { error } = await supabase
-        .from('training')
-        .insert([trainingData]);
-
-      if (error) throw error;
-
-      message.success('Training scheduled successfully!');
-      setIsTrainingModalVisible(false);
-      trainingForm.resetFields();
-      fetchTrainingRequests();
-    } catch (error) {
-      console.error('Error scheduling training:', error);
-      message.error('Failed to schedule training');
-    }
-  };
-
-  const handleProcessPromotion = async (values) => {
-    try {
-      const promotionData = {
-        empid: values.empid,
-        oldposition: values.oldposition,
-        newposition: values.newposition,
-        promotiondate: values.promotiondate.format('YYYY-MM-DD'),
-        salaryincrease: values.salaryincrease,
-        department: values.department,
-        created_at: new Date().toISOString()
-      };
-
-      const { error } = await supabase
-        .from('promotion')
-        .insert([promotionData]);
-
-      if (error) throw error;
-
-      message.success('Promotion processed successfully!');
-      setIsPromotionModalVisible(false);
-      promotionForm.resetFields();
-      fetchPromotionRequests();
-    } catch (error) {
-      console.error('Error processing promotion:', error);
-      message.error('Failed to process promotion');
-    }
-  };
-
-  const handleAddBonus = async (values) => {
-    try {
-      const bonusData = {
-        empid: values.empid,
-        type: values.type,
-        reason: values.reason,
-        amount: values.amount,
-        bonusdate: values.bonusdate.format('YYYY-MM-DD'),
-        processedby: user?.id,
-        created_at: new Date().toISOString()
-      };
-
-      const { error } = await supabase
-        .from('bonus')
-        .insert([bonusData]);
-
-      if (error) throw error;
-
-      message.success('Bonus added successfully!');
-      setIsBonusModalVisible(false);
-      bonusForm.resetFields();
-    } catch (error) {
-      console.error('Error adding bonus:', error);
-      message.error('Failed to add bonus');
-    }
-  };
-
-  const handleProcessIncrement = async (values) => {
-    try {
-      const incrementData = {
-        empid: values.empid,
-        percentage: values.percentage,
-        amount: values.amount,
-        lastincrementdate: values.lastincrementdate.format('YYYY-MM-DD'),
-        nextincrementdate: values.nextincrementdate.format('YYYY-MM-DD'),
-        approval: 'approved',
-        processed_by: user?.id,
-        created_at: new Date().toISOString()
-      };
-
-      const { error } = await supabase
-        .from('increment')
-        .insert([incrementData]);
-
-      if (error) throw error;
-
-      message.success('Increment processed successfully!');
-      setIsIncrementModalVisible(false);
-      incrementForm.resetFields();
-    } catch (error) {
-      console.error('Error processing increment:', error);
-      message.error('Failed to process increment');
-    }
-  };
-
-  const handleAddTask = async (values) => {
-    try {
-      const taskData = {
-        title: values.title,
-        description: values.description,
-        priority: values.priority,
-        type: values.type,
-        due_date: values.due_date.format('YYYY-MM-DD'),
-        status: 'pending',
-        assignee_id: values.assignee_id,
-        created_by: user?.id,
-        created_at: new Date().toISOString()
-      };
-
-      const { error } = await supabase
-        .from('tasks')
-        .insert([taskData]);
-
-      if (error) throw error;
-
-      message.success('Task added successfully!');
-      setIsTaskModalVisible(false);
-      taskForm.resetFields();
-      fetchTasks();
-    } catch (error) {
-      console.error('Error adding task:', error);
-      message.error('Failed to add task');
-    }
-  };
-
-  const handleScheduleMeeting = async (values) => {
-    try {
-      const meetingData = {
-        topic: values.topic,
-        description: values.description,
-        date: values.date.format('YYYY-MM-DD'),
-        starttime: values.starttime.format('HH:mm'),
-        endtime: values.endtime.format('HH:mm'),
-        location: values.location,
-        type: values.type,
-        status: 'scheduled',
-        empid: user?.id,
-        created_at: new Date().toISOString()
-      };
-
-      const { error } = await supabase
-        .from('meeting')
-        .insert([meetingData]);
-
-      if (error) throw error;
-
-      message.success('Meeting scheduled successfully!');
-      setIsMeetingModalVisible(false);
-      meetingForm.resetFields();
-      fetchMeetings();
-    } catch (error) {
-      console.error('Error scheduling meeting:', error);
-      message.error('Failed to schedule meeting');
-    }
-  };
-
-  const handleSubmitFeedback = async (values) => {
-    try {
-      const feedbackData = {
-        empid: values.empid,
-        feedback_type: values.feedback_type,
-        subject: values.subject,
-        message: values.message,
-        rating: values.rating,
-        status: 'submitted',
-        submitted_at: new Date().toISOString(),
-        created_at: new Date().toISOString()
-      };
-
-      const { error } = await supabase
-        .from('employee_feedback')
-        .insert([feedbackData]);
-
-      if (error) throw error;
-
-      message.success('Feedback submitted successfully!');
-      setIsFeedbackModalVisible(false);
-      feedbackForm.resetFields();
-    } catch (error) {
-      console.error('Error submitting feedback:', error);
-      message.error('Failed to submit feedback');
-    }
-  };
-
   const handleUpdateDateRange = async (values) => {
     try {
       const { dateRange: newDateRange } = values;
@@ -1204,20 +645,12 @@ const AdminDashboard = () => {
       
       message.info('Updating data for new date range...');
       
-      // Refetch all data with new date range
       await Promise.all([
         fetchRecentActivities(),
         fetchLeaveRequests(),
         fetchLoanRequests(),
         fetchAttendanceData(),
-        fetchSalaryData(),
-        fetchKPIData(),
-        fetchTrainingRequests(),
-        fetchPromotionRequests(),
-        fetchEpfEtfData(),
-        fetchPerformanceData(),
-        fetchTasks(),
-        fetchMeetings()
+        fetchSalaryData()
       ]);
       
       message.success('Data updated for selected date range!');
@@ -1229,25 +662,12 @@ const AdminDashboard = () => {
 
   const handleViewEmployeeDetails = async (employee) => {
     try {
-      setSelectedEmployeeDetail(employee);
+      setSelectedEmployee(employee);
       setIsEmployeeDetailVisible(true);
     } catch (error) {
       console.error('Error fetching employee details:', error);
       message.error('Failed to load employee details');
     }
-  };
-
-  // Search and filter functions
-  const searchEmployees = (searchTerm) => {
-    if (!searchTerm) return allEmployees;
-    
-    const term = searchTerm.toLowerCase();
-    return allEmployees.filter(emp => 
-      emp.full_name?.toLowerCase().includes(term) ||
-      emp.email?.toLowerCase().includes(term) ||
-      emp.department?.toLowerCase().includes(term) ||
-      emp.role?.toLowerCase().includes(term)
-    );
   };
 
   // Table columns
@@ -1313,8 +733,7 @@ const AdminDashboard = () => {
               onClick={() => {
                 setSelectedEmployee(record);
                 editUserForm.setFieldsValue({
-                  first_name: record.full_name?.split(' ')[0] || '',
-                  last_name: record.full_name?.split(' ').slice(1).join(' ') || '',
+                  full_name: record.full_name,
                   email: record.email,
                   role: record.role,
                   department: record.department,
@@ -1543,7 +962,7 @@ const AdminDashboard = () => {
             renderItem={(item) => (
               <List.Item>
                 <List.Item.Meta
-                  avatar={<Avatar icon={<AuditOutlined />} />}
+                  avatar={<Avatar icon={<SettingOutlined />} />}
                   title={item.action}
                   description={
                     <Space direction="vertical" size={0}>
@@ -1631,13 +1050,6 @@ const AdminDashboard = () => {
       extra={
         <Space>
           <Button 
-            type="primary" 
-            icon={<PlusOutlined />}
-            onClick={() => setIsLoanModalVisible(true)}
-          >
-            Process Loan
-          </Button>
-          <Button 
             icon={<FileExcelOutlined />}
             onClick={() => generateReport('financial')}
           >
@@ -1660,21 +1072,12 @@ const AdminDashboard = () => {
     <Card
       title="Attendance Management"
       extra={
-        <Space>
-          <Button 
-            type="primary" 
-            icon={<PlusOutlined />}
-            onClick={() => setIsAttendanceModalVisible(true)}
-          >
-            Mark Attendance
-          </Button>
-          <Button 
-            icon={<FileExcelOutlined />}
-            onClick={() => generateReport('attendance')}
-          >
-            Export Report
-          </Button>
-        </Space>
+        <Button 
+          icon={<FileExcelOutlined />}
+          onClick={() => generateReport('attendance')}
+        >
+          Export Report
+        </Button>
       }
     >
       <Table
@@ -1719,21 +1122,12 @@ const AdminDashboard = () => {
     <Card
       title="Salary Management"
       extra={
-        <Space>
-          <Button 
-            type="primary" 
-            icon={<PlusOutlined />}
-            onClick={() => setIsSalaryModalVisible(true)}
-          >
-            Process Salary
-          </Button>
-          <Button 
-            icon={<FileExcelOutlined />}
-            onClick={() => generateReport('salary')}
-          >
-            Export Report
-          </Button>
-        </Space>
+        <Button 
+          icon={<FileExcelOutlined />}
+          onClick={() => generateReport('salary')}
+        >
+          Export Report
+        </Button>
       }
     >
       <Table
@@ -1792,29 +1186,16 @@ const AdminDashboard = () => {
         userForm.resetFields();
       }}
       onOk={() => userForm.submit()}
-      width={700}
+      width={600}
     >
       <Form form={userForm} layout="vertical" onFinish={handleAddUser}>
-        <Row gutter={16}>
-          <Col span={12}>
-            <Form.Item
-              name="first_name"
-              label="First Name"
-              rules={[{ required: true, message: 'Please enter first name' }]}
-            >
-              <Input placeholder="Enter first name" />
-            </Form.Item>
-          </Col>
-          <Col span={12}>
-            <Form.Item
-              name="last_name"
-              label="Last Name"
-              rules={[{ required: true, message: 'Please enter last name' }]}
-            >
-              <Input placeholder="Enter last name" />
-            </Form.Item>
-          </Col>
-        </Row>
+        <Form.Item
+          name="full_name"
+          label="Full Name"
+          rules={[{ required: true, message: 'Please enter full name' }]}
+        >
+          <Input placeholder="Enter full name" />
+        </Form.Item>
         
         <Row gutter={16}>
           <Col span={12}>
@@ -1924,29 +1305,16 @@ const AdminDashboard = () => {
         editUserForm.resetFields();
       }}
       onOk={() => editUserForm.submit()}
-      width={700}
+      width={600}
     >
       <Form form={editUserForm} layout="vertical" onFinish={handleEditUser}>
-        <Row gutter={16}>
-          <Col span={12}>
-            <Form.Item
-              name="first_name"
-              label="First Name"
-              rules={[{ required: true, message: 'Please enter first name' }]}
-            >
-              <Input placeholder="Enter first name" />
-            </Form.Item>
-          </Col>
-          <Col span={12}>
-            <Form.Item
-              name="last_name"
-              label="Last Name"
-              rules={[{ required: true, message: 'Please enter last name' }]}
-            >
-              <Input placeholder="Enter last name" />
-            </Form.Item>
-          </Col>
-        </Row>
+        <Form.Item
+          name="full_name"
+          label="Full Name"
+          rules={[{ required: true, message: 'Please enter full name' }]}
+        >
+          <Input placeholder="Enter full name" />
+        </Form.Item>
         
         <Row gutter={16}>
           <Col span={12}>
@@ -2166,53 +1534,53 @@ const AdminDashboard = () => {
   );
 
   const renderEmployeeDetailDrawer = () => (
-    <Drawer
+    <Modal
       title="Employee Details"
-      placement="right"
-      width={600}
-      onClose={() => {
-        setIsEmployeeDetailVisible(false);
-        setSelectedEmployeeDetail(null);
-      }}
       open={isEmployeeDetailVisible}
+      onCancel={() => {
+        setIsEmployeeDetailVisible(false);
+        setSelectedEmployee(null);
+      }}
+      footer={null}
+      width={600}
     >
-      {selectedEmployeeDetail && (
+      {selectedEmployee && (
         <Descriptions column={1} bordered>
           <Descriptions.Item label="Full Name">
-            {selectedEmployeeDetail.full_name}
+            {selectedEmployee.full_name}
           </Descriptions.Item>
           <Descriptions.Item label="Email">
-            {selectedEmployeeDetail.email}
+            {selectedEmployee.email}
           </Descriptions.Item>
           <Descriptions.Item label="Phone">
-            {selectedEmployeeDetail.phone}
+            {selectedEmployee.phone}
           </Descriptions.Item>
           <Descriptions.Item label="Role">
-            <Tag color="blue">{selectedEmployeeDetail.role}</Tag>
+            <Tag color="blue">{selectedEmployee.role}</Tag>
           </Descriptions.Item>
           <Descriptions.Item label="Department">
-            {selectedEmployeeDetail.department}
+            {selectedEmployee.department}
           </Descriptions.Item>
           <Descriptions.Item label="Gender">
-            {selectedEmployeeDetail.gender}
+            {selectedEmployee.gender}
           </Descriptions.Item>
           <Descriptions.Item label="Status">
-            <Tag color={selectedEmployeeDetail.status === 'Active' ? 'green' : 'red'}>
-              {selectedEmployeeDetail.status}
+            <Tag color={selectedEmployee.status === 'Active' ? 'green' : 'red'}>
+              {selectedEmployee.status}
             </Tag>
           </Descriptions.Item>
           <Descriptions.Item label="Basic Salary">
-            LKR {selectedEmployeeDetail.basicsalary?.toLocaleString() || '0'}
+            LKR {selectedEmployee.basicsalary?.toLocaleString() || '0'}
           </Descriptions.Item>
           <Descriptions.Item label="Address">
-            {selectedEmployeeDetail.empaddress}
+            {selectedEmployee.empaddress}
           </Descriptions.Item>
           <Descriptions.Item label="Join Date">
-            {dayjs(selectedEmployeeDetail.created_at).format('MMM D, YYYY')}
+            {dayjs(selectedEmployee.created_at).format('MMM D, YYYY')}
           </Descriptions.Item>
         </Descriptions>
       )}
-    </Drawer>
+    </Modal>
   );
 
   return (
@@ -2275,7 +1643,7 @@ const AdminDashboard = () => {
               key: 'attendance',
               label: (
                 <span>
-                  <ClockCircleOutlined />
+                  <FileTextOutlined />
                   Attendance
                 </span>
               ),
@@ -2285,7 +1653,7 @@ const AdminDashboard = () => {
               key: 'salary',
               label: (
                 <span>
-                  <MoneyCollectOutlined />
+                  <DollarOutlined />
                   Salary Management
                 </span>
               ),

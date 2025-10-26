@@ -26,8 +26,7 @@ export const AuthProvider = ({ children }) => {
       if (userData.email === 'admin@superadmin.com') {
         const adminProfile = {
           empid: 0,
-          first_name: 'Super',
-          last_name: 'Admin',
+          full_name: 'Super Admin',
           email: 'admin@superadmin.com',
           role: 'admin',
           department: 'AUTOMOTIVE',

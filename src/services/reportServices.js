@@ -98,7 +98,7 @@ export class ReportService {
       
       const headers = ['Employee', 'Department', 'Basic Salary', 'OT Pay', 'Bonus', 'Total Salary', 'Date'];
       const data = salaries.map(salary => [
-        `${salary.employee?.first_name || ''} ${salary.employee?.last_name || ''}`.trim() || 'N/A',
+        `${salary.employee?.full_name || ''}`.trim() || 'N/A',
         salary.employee?.department || 'N/A',
         `$${(salary.basicsalary || 0).toLocaleString()}`,
         `$${(salary.otpay || 0).toLocaleString()}`,
@@ -149,7 +149,7 @@ export class ReportService {
         }
 
         return [
-          `${record.employee?.first_name || ''} ${record.employee?.last_name || ''}`.trim() || 'N/A',
+          `${record.employee?.full_name || ''}`.trim() || 'N/A',
           record.date ? dayjs(record.date).format('MMM D, YYYY') : 'N/A',
           record.intime || 'N/A',
           record.outtime || 'N/A',
@@ -188,7 +188,7 @@ export class ReportService {
       
       const headers = ['Employee', 'Type', 'From', 'To', 'Days', 'Status'];
       const data = leaves.map(leave => [
-        `${leave.employee?.first_name || ''} ${leave.employee?.last_name || ''}`.trim() || 'N/A',
+        `${leave.employee?.full_name || ''}`.trim() || 'N/A',
         leave.leavetype?.leavetype || 'N/A',
         leave.leavefromdate ? dayjs(leave.leavefromdate).format('MMM D, YYYY') : 'N/A',
         leave.leavetodate ? dayjs(leave.leavetodate).format('MMM D, YYYY') : 'N/A',
@@ -229,9 +229,8 @@ export class ReportService {
       const headers = ['Employee ID', 'Name', 'Email', 'Department', 'Role', 'Status', 'Join Date'];
       const data = employees.map(emp => [
         emp.empid || 'N/A',
-        `${emp.first_name || ''} ${emp.last_name || ''}`.trim() || 'N/A',
+        `${emp.full_name || ''}`.trim() || 'N/A',
         emp.email || 'N/A',
-        emp.department || 'N/A',
         emp.role || 'N/A',
         emp.status || (emp.is_active ? 'Active' : 'Inactive'),
         emp.created_at ? dayjs(emp.created_at).format('MMM D, YYYY') : 'N/A'

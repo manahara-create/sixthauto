@@ -79,7 +79,7 @@ const AccountantDashboard = () => {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('overview');
   const [user, setUser] = useState(null);
-  
+
   // State for all features
   const [financialData, setFinancialData] = useState({});
   const [payrollData, setPayrollData] = useState([]);
@@ -151,7 +151,7 @@ const AccountantDashboard = () => {
       // Get current user
       const { data: { user: currentUser } } = await supabase.auth.getUser();
       setUser(currentUser);
-      
+
       if (currentUser) {
         await Promise.all([
           fetchFinancialData(),
@@ -182,7 +182,7 @@ const AccountantDashboard = () => {
     try {
       const startDate = dateRange[0].format('YYYY-MM-DD');
       const endDate = dateRange[1].format('YYYY-MM-DD');
-      
+
       // Total salary for selected date range
       const { data: salaryData } = await supabase
         .from('salary')
@@ -237,21 +237,43 @@ const AccountantDashboard = () => {
 
       const { data, error } = await supabase
         .from('salary')
-        .select(`
-          *,
-          employee:empid (full_name, email, department)
-        `)
+        .select('*')
         .gte('salarydate', startDate)
         .lte('salarydate', endDate)
         .order('salarydate', { ascending: false })
         .limit(50);
 
       if (error) throw error;
-      setPayrollData(data || []);
+
+      // Manually fetch employee data
+      const employeeIds = [...new Set(data?.map(s => s.empid).filter(Boolean))];
+      let employeeData = [];
+
+      if (employeeIds.length > 0) {
+        const { data: empData } = await supabase
+          .from('employee')
+          .select('empid, full_name, email, department')
+          .in('empid', employeeIds);
+        employeeData = empData || [];
+      }
+
+      const employeeMap = {};
+      employeeData.forEach(emp => {
+        employeeMap[emp.empid] = emp;
+      });
+
+      const payrollWithEmployee = data?.map(salary => ({
+        ...salary,
+        employee: employeeMap[salary.empid] || { full_name: 'Unknown', email: 'N/A', department: 'N/A' }
+      }));
+
+      setPayrollData(payrollWithEmployee || []);
     } catch (error) {
       console.error('Error fetching payroll data:', error);
+      setPayrollData([]);
     }
   };
+
 
   const fetchEPFData = async () => {
     try {
@@ -260,19 +282,40 @@ const AccountantDashboard = () => {
 
       const { data, error } = await supabase
         .from('epf_contributions')
-        .select(`
-          *,
-          employee:empid (full_name, department)
-        `)
+        .select('*')
         .gte('month', startDate)
         .lte('month', endDate)
         .order('month', { ascending: false })
         .limit(50);
 
       if (error) throw error;
-      setEpfContributions(data || []);
+
+      // Manually fetch employee data
+      const employeeIds = [...new Set(data?.map(e => e.empid).filter(Boolean))];
+      let employeeData = [];
+
+      if (employeeIds.length > 0) {
+        const { data: empData } = await supabase
+          .from('employee')
+          .select('empid, full_name, department')
+          .in('empid', employeeIds);
+        employeeData = empData || [];
+      }
+
+      const employeeMap = {};
+      employeeData.forEach(emp => {
+        employeeMap[emp.empid] = emp;
+      });
+
+      const epfWithEmployee = data?.map(epf => ({
+        ...epf,
+        employee: employeeMap[epf.empid] || { full_name: 'Unknown', department: 'N/A' }
+      }));
+
+      setEpfContributions(epfWithEmployee || []);
     } catch (error) {
       console.error('Error fetching EPF data:', error);
+      setEpfContributions([]);
     }
   };
 
@@ -283,19 +326,40 @@ const AccountantDashboard = () => {
 
       const { data, error } = await supabase
         .from('etf_contributions')
-        .select(`
-          *,
-          employee:empid (full_name, department)
-        `)
+        .select('*')
         .gte('month', startDate)
         .lte('month', endDate)
         .order('month', { ascending: false })
         .limit(50);
 
       if (error) throw error;
-      setEtfContributions(data || []);
+
+      // Manually fetch employee data
+      const employeeIds = [...new Set(data?.map(e => e.empid).filter(Boolean))];
+      let employeeData = [];
+
+      if (employeeIds.length > 0) {
+        const { data: empData } = await supabase
+          .from('employee')
+          .select('empid, full_name, department')
+          .in('empid', employeeIds);
+        employeeData = empData || [];
+      }
+
+      const employeeMap = {};
+      employeeData.forEach(emp => {
+        employeeMap[emp.empid] = emp;
+      });
+
+      const etfWithEmployee = data?.map(etf => ({
+        ...etf,
+        employee: employeeMap[etf.empid] || { full_name: 'Unknown', department: 'N/A' }
+      }));
+
+      setEtfContributions(etfWithEmployee || []);
     } catch (error) {
       console.error('Error fetching ETF data:', error);
+      setEtfContributions([]);
     }
   };
 
@@ -484,16 +548,23 @@ const AccountantDashboard = () => {
     }
   };
 
-  // Enhanced Action handlers - CRUD Operations
   const handleProcessSalary = async (values) => {
     try {
-      const basicSalary = values.basicSalary || 0;
-      const otPay = values.otHours * values.otRate || 0;
-      const bonusPay = values.bonusAmount || 0;
-      const incrementPay = values.incrementAmount || 0;
-      const noPayDeduction = values.noPayDays * (basicSalary / 30) || 0;
-      
+      const basicSalary = parseFloat(values.basicSalary) || 0;
+      const otHours = parseFloat(values.otHours) || 0;
+      const otRate = parseFloat(values.otRate) || 0;
+      const bonusPay = parseFloat(values.bonusAmount) || 0;
+      const incrementPay = parseFloat(values.incrementAmount) || 0;
+      const noPayDays = parseFloat(values.noPayDays) || 0;
+
+      const otPay = otHours * otRate;
+      const noPayDeduction = noPayDays * (basicSalary / 30);
       const totalSalary = basicSalary + otPay + bonusPay + incrementPay - noPayDeduction;
+
+      if (totalSalary < 0) {
+        message.error('Total salary cannot be negative');
+        return;
+      }
 
       const { data, error } = await supabase
         .from('salary')
@@ -506,12 +577,15 @@ const AccountantDashboard = () => {
           totalsalary: totalSalary,
           salarydate: values.salaryDate.format('YYYY-MM-DD'),
           processed_by: user?.id,
-          created_at: new Date().toISOString()
-        }]);
+          processed_at: null, // Will be set when actually processed
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString() // ADDED
+        }])
+        .select();
 
       if (error) throw error;
 
-      await logAccountantOperation('PROCESS_SALARY', data[0].salaryid, {
+      await logAccountantOperation('PROCESS_SALARY', data[0]?.salaryid, {
         employeeId: values.employeeId,
         totalSalary,
         components: { basicSalary, otPay, bonusPay, incrementPay, noPayDeduction }
@@ -523,37 +597,45 @@ const AccountantDashboard = () => {
       await Promise.all([fetchPayrollData(), fetchFinancialData(), fetchRecentActivities()]);
     } catch (error) {
       console.error('Error processing salary:', error);
-      message.error('Failed to process salary');
+      message.error(error.message || 'Failed to process salary');
     }
   };
 
   const handleProcessEPF = async (values) => {
     try {
-      const employeeContribution = values.basicSalary * 0.08;
-      const employerContribution = values.basicSalary * 0.12;
+      const basicSalary = parseFloat(values.basicSalary) || 0;
+
+      if (basicSalary <= 0) {
+        message.error('Basic salary must be greater than 0');
+        return;
+      }
+
+      const employeeContribution = basicSalary * 0.08;
+      const employerContribution = basicSalary * 0.12;
       const totalContribution = employeeContribution + employerContribution;
 
       const { data, error } = await supabase
         .from('epf_contributions')
         .insert([{
           empid: values.employeeId,
-          basicsalary: values.basicSalary,
-          employeecontribution: employeeContribution,
-          employercontribution: employerContribution,
-          totalcontribution: totalContribution,
+          basicsalary: Math.round(basicSalary),
+          employeecontribution: Math.round(employeeContribution),
+          employercontribution: Math.round(employerContribution),
+          totalcontribution: Math.round(totalContribution),
           month: values.contributionMonth.format('YYYY-MM-DD'),
           processed_by: user?.id,
           status: 'processed',
           created_at: new Date().toISOString()
-        }]);
+        }])
+        .select();
 
       if (error) throw error;
 
-      await logAccountantOperation('PROCESS_EPF', data[0].id, {
+      await logAccountantOperation('PROCESS_EPF', data[0]?.id, {
         employeeId: values.employeeId,
-        totalContribution,
-        employeeContribution,
-        employerContribution
+        totalContribution: Math.round(totalContribution),
+        employeeContribution: Math.round(employeeContribution),
+        employerContribution: Math.round(employerContribution)
       });
 
       message.success('EPF contribution processed successfully!');
@@ -565,6 +647,7 @@ const AccountantDashboard = () => {
       message.error('Failed to process EPF contribution');
     }
   };
+
 
   const handleProcessETF = async (values) => {
     try {
@@ -600,23 +683,36 @@ const AccountantDashboard = () => {
 
   const handleAddBonus = async (values) => {
     try {
+      if (!values.employeeId || !values.amount || !values.bonusType) {
+        message.error('Employee, amount, and bonus type are required');
+        return;
+      }
+
+      const amount = parseFloat(values.amount) || 0;
+      if (amount <= 0) {
+        message.error('Bonus amount must be greater than 0');
+        return;
+      }
+
       const { data, error } = await supabase
         .from('bonus')
         .insert([{
           empid: values.employeeId,
-          amount: values.amount,
+          amount: Math.round(amount),
           type: values.bonusType,
-          reason: values.reason,
+          reason: values.reason?.trim() || null,
           bonusdate: values.bonusDate.format('YYYY-MM-DD'),
           processedby: user?.id,
-          created_at: new Date().toISOString()
-        }]);
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString() // ADDED
+        }])
+        .select();
 
       if (error) throw error;
 
-      await logAccountantOperation('ADD_BONUS', data[0].bonusid, {
+      await logAccountantOperation('ADD_BONUS', data[0]?.bonusid, {
         employeeId: values.employeeId,
-        amount: values.amount,
+        amount: Math.round(amount),
         type: values.bonusType
       });
 
@@ -626,33 +722,53 @@ const AccountantDashboard = () => {
       await Promise.all([fetchBonusData(), fetchRecentActivities()]);
     } catch (error) {
       console.error('Error adding bonus:', error);
-      message.error('Failed to add bonus');
+      message.error(error.message || 'Failed to add bonus');
     }
   };
 
   const handleAddOT = async (values) => {
     try {
-      const amount = values.othours * values.rate;
+      if (!values.employeeId || !values.othours || !values.rate) {
+        message.error('Employee, OT hours, and rate are required');
+        return;
+      }
+
+      const othours = parseFloat(values.othours) || 0;
+      const rate = parseFloat(values.rate) || 0;
+
+      if (othours <= 0) {
+        message.error('OT hours must be greater than 0');
+        return;
+      }
+
+      if (rate <= 0) {
+        message.error('Rate must be greater than 0');
+        return;
+      }
+
+      const amount = othours * rate;
 
       const { data, error } = await supabase
         .from('ot')
         .insert([{
           empid: values.employeeId,
-          othours: values.othours,
-          rate: values.rate,
-          amount: amount,
-          type: values.otType,
+          othours: Math.round(othours * 100) / 100, // Round to 2 decimals
+          rate: Math.round(rate),
+          amount: Math.round(amount),
+          type: values.otType || 'regular',
           status: 'approved',
           processed_by: user?.id,
-          created_at: new Date().toISOString()
-        }]);
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString() // ADDED
+        }])
+        .select();
 
       if (error) throw error;
 
-      await logAccountantOperation('ADD_OT', data[0].otid, {
+      await logAccountantOperation('ADD_OT', data[0]?.otid, {
         employeeId: values.employeeId,
-        hours: values.othours,
-        rate: values.rate,
+        hours: othours,
+        rate: rate,
         amount: amount
       });
 
@@ -662,27 +778,64 @@ const AccountantDashboard = () => {
       await Promise.all([fetchOTData(), fetchRecentActivities()]);
     } catch (error) {
       console.error('Error adding OT:', error);
-      message.error('Failed to add OT');
+      message.error(error.message || 'Failed to add OT');
     }
   };
 
   const handleAddKPI = async (values) => {
     try {
+      if (!values.employeeId || values.kpivalue == null) {
+        message.error('Employee and KPI value are required');
+        return;
+      }
+
+      const kpivalue = parseFloat(values.kpivalue) || 0;
+
+      if (kpivalue < 0 || kpivalue > 100) {
+        message.error('KPI value must be between 0 and 100');
+        return;
+      }
+
+      // Determine kpirankingid based on value
+      let kpirankingid = null;
+      const { data: rankings } = await supabase
+        .from('kpiranking')
+        .select('*')
+        .lte('min_value', kpivalue)
+        .gte('max_value', kpivalue)
+        .limit(1);
+
+      if (rankings && rankings.length > 0) {
+        kpirankingid = rankings[0].kpirankingid;
+      }
+
       const { data, error } = await supabase
         .from('kpi')
         .insert([{
           empid: values.employeeId,
-          kpivalue: values.kpivalue,
+          kpivalue: Math.round(kpivalue),
           calculatedate: values.calculateDate.format('YYYY-MM-DD'),
-          kpiyear: dayjs().year(),
-          created_at: new Date().toISOString()
-        }]);
+          kpiyear: values.calculateDate.year(),
+          kpirankingid: kpirankingid, // ADDED - required by schema
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString() // ADDED
+        }])
+        .select();
 
       if (error) throw error;
 
-      await logAccountantOperation('ADD_KPI', data[0].kpiid, {
+      // Update employee's KPI score
+      await supabase
+        .from('employee')
+        .update({
+          kpiscore: Math.round(kpivalue),
+          updated_at: new Date().toISOString()
+        })
+        .eq('empid', values.employeeId);
+
+      await logAccountantOperation('ADD_KPI', data[0]?.kpiid, {
         employeeId: values.employeeId,
-        kpiValue: values.kpivalue
+        kpiValue: Math.round(kpivalue)
       });
 
       message.success('KPI added successfully!');
@@ -691,7 +844,7 @@ const AccountantDashboard = () => {
       await Promise.all([fetchKPIData(), fetchRecentActivities()]);
     } catch (error) {
       console.error('Error adding KPI:', error);
-      message.error('Failed to add KPI');
+      message.error(error.message || 'Failed to add KPI');
     }
   };
 
@@ -730,75 +883,101 @@ const AccountantDashboard = () => {
 
   const handleApproveLoan = async (loanId) => {
     try {
+      if (!loanId) {
+        message.error('Invalid loan ID');
+        return;
+      }
+
       const { error } = await supabase
         .from('loanrequest')
         .update({
           status: 'approved',
           processedby: user?.id,
-          processedat: new Date().toISOString()
+          processedat: new Date().toISOString(),
+          updated_at: new Date().toISOString() // ADDED
         })
         .eq('loanrequestid', loanId);
 
       if (error) throw error;
 
       await logAccountantOperation('APPROVE_LOAN', loanId, {
-        action: 'loan_approved'
+        action: 'loan_approved',
+        timestamp: new Date().toISOString()
       });
 
       message.success('Loan approved successfully!');
       await Promise.all([fetchLoanRequests(), fetchRecentActivities()]);
     } catch (error) {
       console.error('Error approving loan:', error);
-      message.error('Failed to approve loan');
+      message.error(error.message || 'Failed to approve loan');
     }
   };
 
   const handleRejectLoan = async (loanId) => {
     try {
+      if (!loanId) {
+        message.error('Invalid loan ID');
+        return;
+      }
+
       const { error } = await supabase
         .from('loanrequest')
         .update({
           status: 'rejected',
           processedby: user?.id,
-          processedat: new Date().toISOString()
+          processedat: new Date().toISOString(),
+          updated_at: new Date().toISOString() // ADDED
         })
         .eq('loanrequestid', loanId);
 
       if (error) throw error;
 
       await logAccountantOperation('REJECT_LOAN', loanId, {
-        action: 'loan_rejected'
+        action: 'loan_rejected',
+        timestamp: new Date().toISOString()
       });
 
       message.success('Loan rejected successfully!');
       await Promise.all([fetchLoanRequests(), fetchRecentActivities()]);
     } catch (error) {
       console.error('Error rejecting loan:', error);
-      message.error('Failed to reject loan');
+      message.error(error.message || 'Failed to reject loan');
     }
   };
 
   const handleProcessPayment = async (salaryId) => {
     try {
+      if (!salaryId) {
+        message.error('Invalid salary ID');
+        return;
+      }
+
       const { error } = await supabase
         .from('salary')
         .update({
           processed_by: user?.id,
-          processed_at: new Date().toISOString()
+          processed_at: new Date().toISOString(),
+          updated_at: new Date().toISOString() // ADDED
         })
         .eq('salaryid', salaryId);
 
       if (error) throw error;
 
       await logAccountantOperation('PROCESS_PAYMENT', salaryId, {
-        action: 'payment_processed'
+        action: 'payment_processed',
+        timestamp: new Date().toISOString()
       });
 
       message.success('Payment processed successfully!');
-      await Promise.all([fetchPendingPayments(), fetchPayrollData(), fetchFinancialData(), fetchRecentActivities()]);
+      await Promise.all([
+        fetchPendingPayments(),
+        fetchPayrollData(),
+        fetchFinancialData(),
+        fetchRecentActivities()
+      ]);
     } catch (error) {
       console.error('Error processing payment:', error);
-      message.error('Failed to process payment');
+      message.error(error.message || 'Failed to process payment');
     }
   };
 
@@ -899,21 +1078,45 @@ const AccountantDashboard = () => {
     setEmployeeSelectionModalVisible(false);
   };
 
-  // Enhanced Report Generation with date range
   const generatePayrollReport = async (format = 'xlsx') => {
     try {
       const startDate = dateRange[0].format('YYYY-MM-DD');
       const endDate = dateRange[1].format('YYYY-MM-DD');
 
-      const { data: payrollData } = await supabase
+      const { data: payrollData, error } = await supabase
         .from('salary')
-        .select(`
-          *,
-          employee:empid (full_name, department, email)
-        `)
+        .select('*')
         .gte('salarydate', startDate)
         .lte('salarydate', endDate)
         .order('salarydate', { ascending: false });
+
+      if (error) throw error;
+
+      // Manually fetch employee data
+      const employeeIds = [...new Set(payrollData?.map(p => p.empid).filter(Boolean))];
+      let employeeData = [];
+
+      if (employeeIds.length > 0) {
+        const { data: empData } = await supabase
+          .from('employee')
+          .select('empid, full_name, department, email')
+          .in('empid', employeeIds);
+        employeeData = empData || [];
+      }
+
+      const employeeMap = {};
+      employeeData.forEach(emp => {
+        employeeMap[emp.empid] = emp;
+      });
+
+      const payrollWithEmployee = payrollData?.map(salary => ({
+        ...salary,
+        employee: employeeMap[salary.empid] || {
+          full_name: 'Unknown',
+          department: 'N/A',
+          email: 'N/A'
+        }
+      }));
 
       if (format === 'docx') {
         const doc = new Document({
@@ -930,12 +1133,12 @@ const AccountantDashboard = () => {
                 alignment: "center",
               }),
               new Paragraph({
-                text: `Generated on: ${dayjs().format('MMMM D, YYYY')}`,
+                text: `Generated on: ${dayjs().format('MMMM D, YYYY HH:mm')}`,
                 alignment: "center",
               }),
               new Paragraph({ text: "" }),
               new Paragraph({
-                text: `Total Payroll: $${payrollData?.reduce((sum, item) => sum + (item.totalsalary || 0), 0)?.toLocaleString() || '0'}`,
+                text: `Total Payroll: $${payrollWithEmployee?.reduce((sum, item) => sum + (parseFloat(item.totalsalary) || 0), 0)?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00'}`,
                 heading: HeadingLevel.HEADING_2,
               }),
               new Paragraph({ text: "" }),
@@ -944,25 +1147,27 @@ const AccountantDashboard = () => {
                 rows: [
                   new TableRow({
                     children: [
-                      new TableCell({ children: [new Paragraph({ children: [new TextRun("Employee")] })] }),
-                      new TableCell({ children: [new Paragraph({ children: [new TextRun("Department")] })] }),
-                      new TableCell({ children: [new Paragraph({ children: [new TextRun("Basic Salary")] })] }),
-                      new TableCell({ children: [new Paragraph({ children: [new TextRun("OT Pay")] })] }),
-                      new TableCell({ children: [new Paragraph({ children: [new TextRun("Bonus")] })] }),
-                      new TableCell({ children: [new Paragraph({ children: [new TextRun("Total Salary")] })] }),
-                      new TableCell({ children: [new Paragraph({ children: [new TextRun("Date")] })] }),
+                      new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Employee", bold: true })] })] }),
+                      new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Department", bold: true })] })] }),
+                      new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Basic Salary", bold: true })] })] }),
+                      new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "OT Pay", bold: true })] })] }),
+                      new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Bonus", bold: true })] })] }),
+                      new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Increment", bold: true })] })] }),
+                      new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Total Salary", bold: true })] })] }),
+                      new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Date", bold: true })] })] }),
                     ],
                   }),
-                  ...(payrollData?.map(item => 
+                  ...(payrollWithEmployee?.map(item =>
                     new TableRow({
                       children: [
                         new TableCell({ children: [new Paragraph({ children: [new TextRun(item.employee?.full_name || 'N/A')] })] }),
                         new TableCell({ children: [new Paragraph({ children: [new TextRun(item.employee?.department || 'N/A')] })] }),
-                        new TableCell({ children: [new Paragraph({ children: [new TextRun(`$${item.basicsalary?.toLocaleString() || '0'}`)] })] }),
-                        new TableCell({ children: [new Paragraph({ children: [new TextRun(`$${item.otpay?.toLocaleString() || '0'}`)] })] }),
-                        new TableCell({ children: [new Paragraph({ children: [new TextRun(`$${item.bonuspay?.toLocaleString() || '0'}`)] })] }),
-                        new TableCell({ children: [new Paragraph({ children: [new TextRun(`$${item.totalsalary?.toLocaleString() || '0'}`)] })] }),
-                        new TableCell({ children: [new Paragraph({ children: [new TextRun(dayjs(item.salarydate).format('MMM D, YYYY'))] })] }),
+                        new TableCell({ children: [new Paragraph({ children: [new TextRun(`$${(parseFloat(item.basicsalary) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)] })] }),
+                        new TableCell({ children: [new Paragraph({ children: [new TextRun(`$${(parseFloat(item.otpay) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)] })] }),
+                        new TableCell({ children: [new Paragraph({ children: [new TextRun(`$${(parseFloat(item.bonuspay) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)] })] }),
+                        new TableCell({ children: [new Paragraph({ children: [new TextRun(`$${(parseFloat(item.incrementpay) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)] })] }),
+                        new TableCell({ children: [new Paragraph({ children: [new TextRun(`$${(parseFloat(item.totalsalary) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)] })] }),
+                        new TableCell({ children: [new Paragraph({ children: [new TextRun(item.salarydate ? dayjs(item.salarydate).format('MMM D, YYYY') : 'N/A')] })] }),
                       ],
                     })
                   ) || []),
@@ -976,17 +1181,21 @@ const AccountantDashboard = () => {
         saveAs(blob, `payroll-report-${dayjs().format('YYYY-MM-DD')}.docx`);
       } else if (format === 'excel') {
         const worksheet = XLSX.utils.json_to_sheet(
-          payrollData?.map(item => ({
+          payrollWithEmployee?.map(item => ({
             'Employee': item.employee?.full_name || 'N/A',
             'Department': item.employee?.department || 'N/A',
-            'Basic Salary': item.basicsalary,
-            'OT Pay': item.otpay,
-            'Bonus Pay': item.bonuspay,
-            'Total Salary': item.totalsalary,
-            'Date': dayjs(item.salarydate).format('MMM D, YYYY')
+            'Email': item.employee?.email || 'N/A',
+            'Basic Salary': parseFloat(item.basicsalary) || 0,
+            'OT Pay': parseFloat(item.otpay) || 0,
+            'Bonus Pay': parseFloat(item.bonuspay) || 0,
+            'Increment Pay': parseFloat(item.incrementpay) || 0,
+            'Total Salary': parseFloat(item.totalsalary) || 0,
+            'Date': item.salarydate ? dayjs(item.salarydate).format('MMM D, YYYY') : 'N/A',
+            'Processed By': item.processed_by || 'Pending',
+            'Processed At': item.processed_at ? dayjs(item.processed_at).format('MMM D, YYYY HH:mm') : 'N/A'
           })) || []
         );
-        
+
         const workbook = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(workbook, worksheet, 'Payroll');
         XLSX.writeFile(workbook, `payroll-report-${dayjs().format('YYYY-MM-DD')}.xlsx`);
@@ -995,7 +1204,7 @@ const AccountantDashboard = () => {
       message.success(`Payroll report generated successfully!`);
     } catch (error) {
       console.error('Error generating payroll report:', error);
-      message.error('Failed to generate report');
+      message.error(error.message || 'Failed to generate report');
     }
   };
 
@@ -1004,15 +1213,39 @@ const AccountantDashboard = () => {
       const startDate = dateRange[0].format('YYYY-MM-DD');
       const endDate = dateRange[1].format('YYYY-MM-DD');
 
-      const { data: epfData } = await supabase
+      const { data: epfData, error } = await supabase
         .from('epf_contributions')
-        .select(`
-          *,
-          employee:empid (full_name, department)
-        `)
+        .select('*')
         .gte('month', startDate)
         .lte('month', endDate)
         .order('month', { ascending: false });
+
+      if (error) throw error;
+
+      // Manually fetch employee data
+      const employeeIds = [...new Set(epfData?.map(e => e.empid).filter(Boolean))];
+      let employeeData = [];
+
+      if (employeeIds.length > 0) {
+        const { data: empData } = await supabase
+          .from('employee')
+          .select('empid, full_name, department')
+          .in('empid', employeeIds);
+        employeeData = empData || [];
+      }
+
+      const employeeMap = {};
+      employeeData.forEach(emp => {
+        employeeMap[emp.empid] = emp;
+      });
+
+      const epfWithEmployee = epfData?.map(epf => ({
+        ...epf,
+        employee: employeeMap[epf.empid] || {
+          full_name: 'Unknown',
+          department: 'N/A'
+        }
+      }));
 
       if (format === 'docx') {
         const doc = new Document({
@@ -1029,12 +1262,12 @@ const AccountantDashboard = () => {
                 alignment: "center",
               }),
               new Paragraph({
-                text: `Generated on: ${dayjs().format('MMMM D, YYYY')}`,
+                text: `Generated on: ${dayjs().format('MMMM D, YYYY HH:mm')}`,
                 alignment: "center",
               }),
               new Paragraph({ text: "" }),
               new Paragraph({
-                text: `Total EPF Contributions: $${epfData?.reduce((sum, item) => sum + (item.totalcontribution || 0), 0)?.toLocaleString() || '0'}`,
+                text: `Total EPF Contributions: $${epfWithEmployee?.reduce((sum, item) => sum + (parseInt(item.totalcontribution) || 0), 0)?.toLocaleString() || '0'}`,
                 heading: HeadingLevel.HEADING_2,
               }),
               new Paragraph({ text: "" }),
@@ -1043,25 +1276,27 @@ const AccountantDashboard = () => {
                 rows: [
                   new TableRow({
                     children: [
-                      new TableCell({ children: [new Paragraph({ children: [new TextRun("Employee")] })] }),
-                      new TableCell({ children: [new Paragraph({ children: [new TextRun("Department")] })] }),
-                      new TableCell({ children: [new Paragraph({ children: [new TextRun("Basic Salary")] })] }),
-                      new TableCell({ children: [new Paragraph({ children: [new TextRun("Employee EPF (8%)")] })] }),
-                      new TableCell({ children: [new Paragraph({ children: [new TextRun("Employer EPF (12%)")] })] }),
-                      new TableCell({ children: [new Paragraph({ children: [new TextRun("Total Contribution")] })] }),
-                      new TableCell({ children: [new Paragraph({ children: [new TextRun("Date")] })] }),
+                      new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Employee", bold: true })] })] }),
+                      new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Department", bold: true })] })] }),
+                      new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Basic Salary", bold: true })] })] }),
+                      new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Employee EPF (8%)", bold: true })] })] }),
+                      new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Employer EPF (12%)", bold: true })] })] }),
+                      new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Total", bold: true })] })] }),
+                      new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Month", bold: true })] })] }),
+                      new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "Status", bold: true })] })] }),
                     ],
                   }),
-                  ...(epfData?.map(item => 
+                  ...(epfWithEmployee?.map(item =>
                     new TableRow({
                       children: [
                         new TableCell({ children: [new Paragraph({ children: [new TextRun(item.employee?.full_name || 'N/A')] })] }),
                         new TableCell({ children: [new Paragraph({ children: [new TextRun(item.employee?.department || 'N/A')] })] }),
-                        new TableCell({ children: [new Paragraph({ children: [new TextRun(`$${item.basicsalary?.toLocaleString() || '0'}`)] })] }),
-                        new TableCell({ children: [new Paragraph({ children: [new TextRun(`$${item.employeecontribution?.toLocaleString() || '0'}`)] })] }),
-                        new TableCell({ children: [new Paragraph({ children: [new TextRun(`$${item.employercontribution?.toLocaleString() || '0'}`)] })] }),
-                        new TableCell({ children: [new Paragraph({ children: [new TextRun(`$${item.totalcontribution?.toLocaleString() || '0'}`)] })] }),
-                        new TableCell({ children: [new Paragraph({ children: [new TextRun(dayjs(item.month).format('MMM D, YYYY'))] })] }),
+                        new TableCell({ children: [new Paragraph({ children: [new TextRun(`$${(parseInt(item.basicsalary) || 0).toLocaleString()}`)] })] }),
+                        new TableCell({ children: [new Paragraph({ children: [new TextRun(`$${(parseInt(item.employeecontribution) || 0).toLocaleString()}`)] })] }),
+                        new TableCell({ children: [new Paragraph({ children: [new TextRun(`$${(parseInt(item.employercontribution) || 0).toLocaleString()}`)] })] }),
+                        new TableCell({ children: [new Paragraph({ children: [new TextRun(`$${(parseInt(item.totalcontribution) || 0).toLocaleString()}`)] })] }),
+                        new TableCell({ children: [new Paragraph({ children: [new TextRun(item.month ? dayjs(item.month).format('MMM YYYY') : 'N/A')] })] }),
+                        new TableCell({ children: [new Paragraph({ children: [new TextRun(item.status || 'pending')] })] }),
                       ],
                     })
                   ) || []),
@@ -1075,17 +1310,19 @@ const AccountantDashboard = () => {
         saveAs(blob, `epf-report-${dayjs().format('YYYY-MM-DD')}.docx`);
       } else if (format === 'excel') {
         const worksheet = XLSX.utils.json_to_sheet(
-          epfData?.map(item => ({
+          epfWithEmployee?.map(item => ({
             'Employee': item.employee?.full_name || 'N/A',
             'Department': item.employee?.department || 'N/A',
-            'Basic Salary': item.basicsalary,
-            'Employee EPF (8%)': item.employeecontribution,
-            'Employer EPF (12%)': item.employercontribution,
-            'Total Contribution': item.totalcontribution,
-            'Date': dayjs(item.month).format('MMM D, YYYY')
+            'Basic Salary': parseInt(item.basicsalary) || 0,
+            'Employee EPF (8%)': parseInt(item.employeecontribution) || 0,
+            'Employer EPF (12%)': parseInt(item.employercontribution) || 0,
+            'Total Contribution': parseInt(item.totalcontribution) || 0,
+            'Month': item.month ? dayjs(item.month).format('MMM YYYY') : 'N/A',
+            'Status': item.status || 'pending',
+            'Processed By': item.processed_by || 'N/A'
           })) || []
         );
-        
+
         const workbook = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(workbook, worksheet, 'EPF Contributions');
         XLSX.writeFile(workbook, `epf-report-${dayjs().format('YYYY-MM-DD')}.xlsx`);
@@ -1094,7 +1331,7 @@ const AccountantDashboard = () => {
       message.success(`EPF report generated successfully!`);
     } catch (error) {
       console.error('Error generating EPF report:', error);
-      message.error('Failed to generate report');
+      message.error(error.message || 'Failed to generate report');
     }
   };
 
@@ -1157,7 +1394,7 @@ const AccountantDashboard = () => {
                       new TableCell({ children: [new Paragraph({ children: [new TextRun("Date")] })] }),
                     ],
                   }),
-                  ...(loanData?.map(item => 
+                  ...(loanData?.map(item =>
                     new TableRow({
                       children: [
                         new TableCell({ children: [new Paragraph({ children: [new TextRun(item.employee?.full_name || 'N/A')] })] }),
@@ -1192,7 +1429,7 @@ const AccountantDashboard = () => {
             'Date': dayjs(item.date).format('MMM D, YYYY')
           })) || []
         );
-        
+
         const workbook = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(workbook, worksheet, 'Loan Requests');
         XLSX.writeFile(workbook, `loan-report-${dayjs().format('YYYY-MM-DD')}.xlsx`);
@@ -1209,7 +1446,7 @@ const AccountantDashboard = () => {
     try {
       const startDate = dateRange[0].format('YYYY-MM-DD');
       const endDate = dateRange[1].format('YYYY-MM-DD');
-      
+
       // Get data for summary
       const { data: salaryData } = await supabase
         .from('salary')
@@ -1350,7 +1587,7 @@ const AccountantDashboard = () => {
             'Amount': totalSalary + totalEPF + totalETF
           }
         ]);
-        
+
         const workbook = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(workbook, worksheet, 'Financial Summary');
         XLSX.writeFile(workbook, `financial-summary-${dayjs().format('YYYY-MM-DD')}.xlsx`);
@@ -1409,15 +1646,15 @@ const AccountantDashboard = () => {
       key: 'actions',
       render: (_, record) => (
         <Space>
-          <Button 
-            type="primary" 
+          <Button
+            type="primary"
             size="small"
             disabled={record.processed_by}
             onClick={() => handleProcessPayment(record.salaryid)}
           >
             Process
           </Button>
-          <Button 
+          <Button
             size="small"
             onClick={() => {
               Modal.info({
@@ -1503,8 +1740,8 @@ const AccountantDashboard = () => {
       key: 'status',
       render: (status) => (
         <Tag color={
-          status === 'approved' ? 'green' : 
-          status === 'rejected' ? 'red' : 'orange'
+          status === 'approved' ? 'green' :
+            status === 'rejected' ? 'red' : 'orange'
         }>
           {status?.toUpperCase() || 'PENDING'}
         </Tag>
@@ -1517,14 +1754,14 @@ const AccountantDashboard = () => {
         <Space>
           {record.status === 'pending' && (
             <>
-              <Button 
-                type="primary" 
+              <Button
+                type="primary"
                 size="small"
                 onClick={() => handleApproveLoan(record.loanrequestid)}
               >
                 Approve
               </Button>
-              <Button 
+              <Button
                 danger
                 size="small"
                 onClick={() => handleRejectLoan(record.loanrequestid)}
@@ -1533,7 +1770,7 @@ const AccountantDashboard = () => {
               </Button>
             </>
           )}
-          <Button 
+          <Button
             size="small"
             onClick={() => handleCheckLoanEligibility(record.empid)}
           >
@@ -1676,8 +1913,8 @@ const AccountantDashboard = () => {
   return (
     <div style={{ padding: '16px', maxWidth: '1400px', margin: '0 auto' }}>
       {/* Header */}
-      <Card size="small" style={{ 
-        marginBottom: 16, 
+      <Card size="small" style={{
+        marginBottom: 16,
         background: 'linear-gradient(135deg, #722ed1 0%, #391085 100%)',
         border: 'none'
       }}>
@@ -1702,8 +1939,8 @@ const AccountantDashboard = () => {
                 format="YYYY-MM-DD"
                 style={{ background: 'white' }}
               />
-              <Button 
-                type="primary" 
+              <Button
+                type="primary"
                 icon={<UserOutlined />}
                 onClick={() => setEmployeeSelectionModalVisible(true)}
               >
@@ -1728,7 +1965,7 @@ const AccountantDashboard = () => {
 
       <Tabs activeKey={activeTab} onChange={setActiveTab}>
         <TabPane tab="Overview" key="overview">
-          <OverviewTab 
+          <OverviewTab
             financialData={financialData}
             pendingPayments={pendingPayments}
             recentActivities={recentActivities}
@@ -1741,9 +1978,9 @@ const AccountantDashboard = () => {
             dateRange={dateRange}
           />
         </TabPane>
-        
+
         <TabPane tab="Payroll Management" key="payroll">
-          <PayrollTab 
+          <PayrollTab
             payrollData={payrollData}
             pendingPayments={pendingPayments}
             payrollColumns={payrollColumns}
@@ -1752,9 +1989,9 @@ const AccountantDashboard = () => {
             dateRange={dateRange}
           />
         </TabPane>
-        
+
         <TabPane tab="EPF/ETF" key="epf">
-          <EPFTab 
+          <EPFTab
             epfContributions={epfContributions}
             etfContributions={etfContributions}
             onProcessEPF={() => setEpfModalVisible(true)}
@@ -1764,7 +2001,7 @@ const AccountantDashboard = () => {
         </TabPane>
 
         <TabPane tab="Loan Management" key="loans">
-          <LoanTab 
+          <LoanTab
             loanRequests={loanRequests}
             loanColumns={loanColumns}
             employees={employees}
@@ -1779,7 +2016,7 @@ const AccountantDashboard = () => {
         </TabPane>
 
         <TabPane tab="Bonus & OT" key="bonus">
-          <BonusOTTab 
+          <BonusOTTab
             bonusData={bonusData}
             otData={otData}
             bonusColumns={bonusColumns}
@@ -1791,15 +2028,15 @@ const AccountantDashboard = () => {
         </TabPane>
 
         <TabPane tab="KPI Management" key="kpi">
-          <KPITab 
+          <KPITab
             kpiData={kpiData}
             onAddKPI={() => setKpiModalVisible(true)}
             dateRange={dateRange}
           />
         </TabPane>
-        
+
         <TabPane tab="Reports & Analytics" key="reports">
-          <ReportsTab 
+          <ReportsTab
             onGeneratePayrollReport={generatePayrollReport}
             onGenerateEPFReport={generateEPFReport}
             onGenerateLoanReport={generateLoanReport}
@@ -1810,7 +2047,7 @@ const AccountantDashboard = () => {
             dateRange={dateRange}
           />
         </TabPane>
-        
+
         <TabPane tab="Recent Activities" key="activities">
           <ActivitiesTab recentActivities={recentActivities} dateRange={dateRange} />
         </TabPane>
@@ -1836,8 +2073,8 @@ const AccountantDashboard = () => {
           renderItem={employee => (
             <List.Item
               actions={[
-                <Button 
-                  type="primary" 
+                <Button
+                  type="primary"
                   onClick={() => handleEmployeeSelect(employee)}
                 >
                   Select
@@ -1873,8 +2110,8 @@ const AccountantDashboard = () => {
           <Row gutter={16}>
             <Col span={12}>
               <Form.Item name="employeeId" label="Employee" rules={[{ required: true, message: 'Please select an employee' }]}>
-                <Select 
-                  placeholder="Select employee" 
+                <Select
+                  placeholder="Select employee"
                   showSearch
                   optionFilterProp="children"
                   filterOption={(input, option) =>
@@ -1897,12 +2134,12 @@ const AccountantDashboard = () => {
           </Row>
 
           <Divider orientation="left">Salary Components</Divider>
-          
+
           <Row gutter={16}>
             <Col span={12}>
               <Form.Item name="basicSalary" label="Basic Salary" rules={[{ required: true, message: 'Please enter basic salary' }]}>
-                <InputNumber 
-                  style={{ width: '100%' }} 
+                <InputNumber
+                  style={{ width: '100%' }}
                   min={0}
                   placeholder="Enter basic salary"
                   formatter={value => `$ ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
@@ -1912,9 +2149,9 @@ const AccountantDashboard = () => {
             </Col>
             <Col span={12}>
               <Form.Item name="otHours" label="OT Hours">
-                <InputNumber 
-                  style={{ width: '100%' }} 
-                  min={0} 
+                <InputNumber
+                  style={{ width: '100%' }}
+                  min={0}
                   placeholder="Enter OT hours"
                 />
               </Form.Item>
@@ -1924,8 +2161,8 @@ const AccountantDashboard = () => {
           <Row gutter={16}>
             <Col span={12}>
               <Form.Item name="otRate" label="OT Rate per Hour">
-                <InputNumber 
-                  style={{ width: '100%' }} 
+                <InputNumber
+                  style={{ width: '100%' }}
                   min={0}
                   placeholder="Enter OT rate"
                   formatter={value => `$ ${value}`}
@@ -1935,8 +2172,8 @@ const AccountantDashboard = () => {
             </Col>
             <Col span={12}>
               <Form.Item name="bonusAmount" label="Bonus Amount">
-                <InputNumber 
-                  style={{ width: '100%' }} 
+                <InputNumber
+                  style={{ width: '100%' }}
                   min={0}
                   placeholder="Enter bonus amount"
                   formatter={value => `$ ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
@@ -1949,8 +2186,8 @@ const AccountantDashboard = () => {
           <Row gutter={16}>
             <Col span={12}>
               <Form.Item name="incrementAmount" label="Increment Amount">
-                <InputNumber 
-                  style={{ width: '100%' }} 
+                <InputNumber
+                  style={{ width: '100%' }}
                   min={0}
                   placeholder="Enter increment amount"
                   formatter={value => `$ ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
@@ -1960,10 +2197,10 @@ const AccountantDashboard = () => {
             </Col>
             <Col span={12}>
               <Form.Item name="noPayDays" label="No Pay Days">
-                <InputNumber 
-                  style={{ width: '100%' }} 
-                  min={0} 
-                  max={31} 
+                <InputNumber
+                  style={{ width: '100%' }}
+                  min={0}
+                  max={31}
                   placeholder="Enter no pay days"
                 />
               </Form.Item>
@@ -1992,8 +2229,8 @@ const AccountantDashboard = () => {
               <Row gutter={16}>
                 <Col span={12}>
                   <Form.Item name="employeeId" label="Employee" rules={[{ required: true, message: 'Please select an employee' }]}>
-                    <Select 
-                      placeholder="Select employee" 
+                    <Select
+                      placeholder="Select employee"
                       showSearch
                       optionFilterProp="children"
                       filterOption={(input, option) =>
@@ -2016,8 +2253,8 @@ const AccountantDashboard = () => {
               </Row>
 
               <Form.Item name="basicSalary" label="Basic Salary" rules={[{ required: true, message: 'Please enter basic salary' }]}>
-                <InputNumber 
-                  style={{ width: '100%' }} 
+                <InputNumber
+                  style={{ width: '100%' }}
                   min={0}
                   placeholder="Enter basic salary"
                   formatter={value => `$ ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
@@ -2044,8 +2281,8 @@ const AccountantDashboard = () => {
               <Row gutter={16}>
                 <Col span={12}>
                   <Form.Item name="employeeId" label="Employee" rules={[{ required: true, message: 'Please select an employee' }]}>
-                    <Select 
-                      placeholder="Select employee" 
+                    <Select
+                      placeholder="Select employee"
                       showSearch
                       optionFilterProp="children"
                       filterOption={(input, option) =>
@@ -2068,8 +2305,8 @@ const AccountantDashboard = () => {
               </Row>
 
               <Form.Item name="basicSalary" label="Basic Salary" rules={[{ required: true, message: 'Please enter basic salary' }]}>
-                <InputNumber 
-                  style={{ width: '100%' }} 
+                <InputNumber
+                  style={{ width: '100%' }}
                   min={0}
                   placeholder="Enter basic salary"
                   formatter={value => `$ ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
@@ -2104,8 +2341,8 @@ const AccountantDashboard = () => {
       >
         <Form form={bonusForm} layout="vertical" onFinish={handleAddBonus}>
           <Form.Item name="employeeId" label="Employee" rules={[{ required: true, message: 'Please select an employee' }]}>
-            <Select 
-              placeholder="Select employee" 
+            <Select
+              placeholder="Select employee"
               showSearch
               optionFilterProp="children"
               filterOption={(input, option) =>
@@ -2130,8 +2367,8 @@ const AccountantDashboard = () => {
           </Form.Item>
 
           <Form.Item name="amount" label="Bonus Amount" rules={[{ required: true, message: 'Please enter bonus amount' }]}>
-            <InputNumber 
-              style={{ width: '100%' }} 
+            <InputNumber
+              style={{ width: '100%' }}
               min={0}
               placeholder="Enter bonus amount"
               formatter={value => `$ ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
@@ -2165,8 +2402,8 @@ const AccountantDashboard = () => {
       >
         <Form form={otForm} layout="vertical" onFinish={handleAddOT}>
           <Form.Item name="employeeId" label="Employee" rules={[{ required: true, message: 'Please select an employee' }]}>
-            <Select 
-              placeholder="Select employee" 
+            <Select
+              placeholder="Select employee"
               showSearch
               optionFilterProp="children"
               filterOption={(input, option) =>
@@ -2190,17 +2427,17 @@ const AccountantDashboard = () => {
           </Form.Item>
 
           <Form.Item name="othours" label="OT Hours" rules={[{ required: true, message: 'Please enter OT hours' }]}>
-            <InputNumber 
-              style={{ width: '100%' }} 
-              min={0} 
-              step={0.5} 
+            <InputNumber
+              style={{ width: '100%' }}
+              min={0}
+              step={0.5}
               placeholder="Enter OT hours"
             />
           </Form.Item>
 
           <Form.Item name="rate" label="OT Rate per Hour" rules={[{ required: true, message: 'Please enter OT rate' }]}>
-            <InputNumber 
-              style={{ width: '100%' }} 
+            <InputNumber
+              style={{ width: '100%' }}
               min={0}
               placeholder="Enter OT rate per hour"
               formatter={value => `$ ${value}`}
@@ -2226,8 +2463,8 @@ const AccountantDashboard = () => {
       >
         <Form form={kpiForm} layout="vertical" onFinish={handleAddKPI}>
           <Form.Item name="employeeId" label="Employee" rules={[{ required: true, message: 'Please select an employee' }]}>
-            <Select 
-              placeholder="Select employee" 
+            <Select
+              placeholder="Select employee"
               showSearch
               optionFilterProp="children"
               filterOption={(input, option) =>
@@ -2243,10 +2480,10 @@ const AccountantDashboard = () => {
           </Form.Item>
 
           <Form.Item name="kpivalue" label="KPI Value" rules={[{ required: true, message: 'Please enter KPI value' }]}>
-            <InputNumber 
-              style={{ width: '100%' }} 
-              min={0} 
-              max={100} 
+            <InputNumber
+              style={{ width: '100%' }}
+              min={0}
+              max={100}
               placeholder="Enter KPI value (0-100)"
             />
           </Form.Item>
@@ -2275,8 +2512,8 @@ const AccountantDashboard = () => {
           <Row gutter={16}>
             <Col span={12}>
               <Form.Item name="employeeId" label="Employee" rules={[{ required: true, message: 'Please select an employee' }]}>
-                <Select 
-                  placeholder="Select employee" 
+                <Select
+                  placeholder="Select employee"
                   showSearch
                   optionFilterProp="children"
                   filterOption={(input, option) =>
@@ -2307,8 +2544,8 @@ const AccountantDashboard = () => {
           <Row gutter={16}>
             <Col span={12}>
               <Form.Item name="amount" label="Loan Amount" rules={[{ required: true, message: 'Please enter loan amount' }]}>
-                <InputNumber 
-                  style={{ width: '100%' }} 
+                <InputNumber
+                  style={{ width: '100%' }}
                   min={0}
                   placeholder="Enter loan amount"
                   formatter={value => `$ ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
@@ -2318,10 +2555,10 @@ const AccountantDashboard = () => {
             </Col>
             <Col span={12}>
               <Form.Item name="duration" label="Duration (months)" rules={[{ required: true, message: 'Please enter duration' }]}>
-                <InputNumber 
-                  style={{ width: '100%' }} 
-                  min={1} 
-                  max={60} 
+                <InputNumber
+                  style={{ width: '100%' }}
+                  min={1}
+                  max={60}
                   placeholder="Enter duration in months"
                 />
               </Form.Item>
@@ -2331,11 +2568,11 @@ const AccountantDashboard = () => {
           <Row gutter={16}>
             <Col span={12}>
               <Form.Item name="interestRate" label="Interest Rate (%)" rules={[{ required: true, message: 'Please enter interest rate' }]}>
-                <InputNumber 
-                  style={{ width: '100%' }} 
-                  min={0} 
-                  max={100} 
-                  step={0.1} 
+                <InputNumber
+                  style={{ width: '100%' }}
+                  min={0}
+                  max={100}
+                  step={0.1}
                   placeholder="Enter interest rate"
                 />
               </Form.Item>
@@ -2364,7 +2601,7 @@ const AccountantDashboard = () => {
         width={700}
       >
         {selectedEmployee && (
-          <LoanEligibilityCheck 
+          <LoanEligibilityCheck
             employee={selectedEmployee}
             loanTypes={loanTypes}
           />
@@ -2543,8 +2780,8 @@ const PayrollTab = ({ payrollData, pendingPayments, payrollColumns, onProcessSal
   <div>
     <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
       <Col span={24}>
-        <Card 
-          title={`Payroll Management (${dateRange[0].format('MMM D, YYYY')} - ${dateRange[1].format('MMM D, YYYY')})`} 
+        <Card
+          title={`Payroll Management (${dateRange[0].format('MMM D, YYYY')} - ${dateRange[1].format('MMM D, YYYY')})`}
           extra={
             <Button type="primary" icon={<PlusOutlined />} onClick={onProcessSalary}>
               Process Salary
@@ -2558,7 +2795,7 @@ const PayrollTab = ({ payrollData, pendingPayments, payrollColumns, onProcessSal
             showIcon
             style={{ marginBottom: 16 }}
           />
-          
+
           <Row gutter={[16, 16]}>
             <Col span={8}>
               <Statistic
@@ -2627,8 +2864,8 @@ const EPFTab = ({ epfContributions, etfContributions, onProcessEPF, onGenerateEP
   <div>
     <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
       <Col span={24}>
-        <Card 
-          title={`EPF/ETF Management (${dateRange[0].format('MMM D, YYYY')} - ${dateRange[1].format('MMM D, YYYY')})`} 
+        <Card
+          title={`EPF/ETF Management (${dateRange[0].format('MMM D, YYYY')} - ${dateRange[1].format('MMM D, YYYY')})`}
           extra={
             <Space>
               <Button onClick={() => onGenerateEPFReport('excel')} icon={<FileExcelOutlined />}>
@@ -2784,8 +3021,8 @@ const LoanTab = ({ loanRequests, loanColumns, employees, loanTypes, onProcessLoa
   <div>
     <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
       <Col span={24}>
-        <Card 
-          title={`Loan Management (${dateRange[0].format('MMM D, YYYY')} - ${dateRange[1].format('MMM D, YYYY')})`} 
+        <Card
+          title={`Loan Management (${dateRange[0].format('MMM D, YYYY')} - ${dateRange[1].format('MMM D, YYYY')})`}
           extra={
             <Space>
               <Button onClick={() => onGenerateLoanReport('excel')} icon={<FileExcelOutlined />}>
@@ -2806,7 +3043,7 @@ const LoanTab = ({ loanRequests, loanColumns, employees, loanTypes, onProcessLoa
             type="info"
             showIcon
           />
-          
+
           <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
             <Col span={6}>
               <Statistic
@@ -2860,8 +3097,8 @@ const BonusOTTab = ({ bonusData, otData, bonusColumns, otColumns, onAddBonus, on
   <div>
     <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
       <Col span={24}>
-        <Card 
-          title={`Bonus & Overtime Management (${dateRange[0].format('MMM D, YYYY')} - ${dateRange[1].format('MMM D, YYYY')})`} 
+        <Card
+          title={`Bonus & Overtime Management (${dateRange[0].format('MMM D, YYYY')} - ${dateRange[1].format('MMM D, YYYY')})`}
           extra={
             <Space>
               <Button type="primary" icon={<PlusOutlined />} onClick={onAddBonus}>
@@ -2920,8 +3157,8 @@ const KPITab = ({ kpiData, onAddKPI, dateRange }) => (
   <div>
     <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
       <Col span={24}>
-        <Card 
-          title={`KPI Management (${dateRange[0].format('MMM D, YYYY')} - ${dateRange[1].format('MMM D, YYYY')})`} 
+        <Card
+          title={`KPI Management (${dateRange[0].format('MMM D, YYYY')} - ${dateRange[1].format('MMM D, YYYY')})`}
           extra={
             <Button type="primary" icon={<PlusOutlined />} onClick={onAddKPI}>
               Add KPI
@@ -2954,9 +3191,9 @@ const KPITab = ({ kpiData, onAddKPI, dateRange }) => (
               dataIndex: 'kpivalue',
               key: 'kpivalue',
               render: (value) => (
-                <Progress 
-                  percent={value} 
-                  size="small" 
+                <Progress
+                  percent={value}
+                  size="small"
                   status={value >= 80 ? 'success' : value >= 60 ? 'normal' : 'exception'}
                 />
               )
@@ -2984,15 +3221,15 @@ const KPITab = ({ kpiData, onAddKPI, dateRange }) => (
   </div>
 );
 
-const ReportsTab = ({ 
-  onGeneratePayrollReport, 
-  onGenerateEPFReport, 
-  onGenerateLoanReport, 
-  onGenerateFinancialSummary, 
-  financialData, 
-  payrollData, 
+const ReportsTab = ({
+  onGeneratePayrollReport,
+  onGenerateEPFReport,
+  onGenerateLoanReport,
+  onGenerateFinancialSummary,
+  financialData,
+  payrollData,
   loanRequests,
-  dateRange 
+  dateRange
 }) => (
   <div>
     <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
@@ -3008,8 +3245,8 @@ const ReportsTab = ({
 
           <Row gutter={[16, 16]}>
             <Col xs={24} sm={12} md={8}>
-              <Card 
-                size="small" 
+              <Card
+                size="small"
                 hoverable
                 actions={[
                   <Button type="link" icon={<FileWordOutlined />} onClick={() => onGeneratePayrollReport('docx')}>
@@ -3028,8 +3265,8 @@ const ReportsTab = ({
               </Card>
             </Col>
             <Col xs={24} sm={12} md={8}>
-              <Card 
-                size="small" 
+              <Card
+                size="small"
                 hoverable
                 actions={[
                   <Button type="link" icon={<FileWordOutlined />} onClick={() => onGenerateEPFReport('docx')}>
@@ -3048,8 +3285,8 @@ const ReportsTab = ({
               </Card>
             </Col>
             <Col xs={24} sm={12} md={8}>
-              <Card 
-                size="small" 
+              <Card
+                size="small"
                 hoverable
                 actions={[
                   <Button type="link" icon={<FileWordOutlined />} onClick={() => onGenerateLoanReport('docx')}>
@@ -3068,8 +3305,8 @@ const ReportsTab = ({
               </Card>
             </Col>
             <Col xs={24} sm={12} md={8}>
-              <Card 
-                size="small" 
+              <Card
+                size="small"
                 hoverable
                 actions={[
                   <Button type="link" icon={<FileWordOutlined />} onClick={() => onGenerateFinancialSummary('docx')}>
@@ -3178,9 +3415,9 @@ const LoanEligibilityCheck = ({ employee, loanTypes }) => {
       let eligible = true;
       let maxAmount = 0;
       let reasons = [];
-      
+
       // Basic eligibility criteria based on loan type
-      switch(loanType.loantype?.toLowerCase()) {
+      switch (loanType.loantype?.toLowerCase()) {
         case 'staff loan':
           maxAmount = employee.basicsalary * 3; // 3 months basic salary
           break;
@@ -3246,8 +3483,8 @@ const LoanEligibilityCheck = ({ employee, loanTypes }) => {
           <List.Item>
             <List.Item.Meta
               avatar={
-                <Badge 
-                  status={item.eligible ? 'success' : 'error'} 
+                <Badge
+                  status={item.eligible ? 'success' : 'error'}
                   text={item.eligible ? 'Eligible' : 'Not Eligible'}
                 />
               }

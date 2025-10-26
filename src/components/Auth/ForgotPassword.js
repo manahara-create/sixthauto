@@ -34,7 +34,7 @@ const ForgotPassword = () => {
       // Check in employee table
       const { data: employeeData, error } = await supabase
         .from('employee')
-        .select('empid, email, first_name, last_name, role, status')
+        .select('empid, email, full_name, role, status')
         .eq('email', normalizedEmail)
         .single();
 
@@ -189,7 +189,7 @@ const ForgotPassword = () => {
                 }}>
                   <UserOutlined style={{ color: '#3498db', marginRight: '8px' }} />
                   <Text strong>
-                    {userData.first_name} {userData.last_name} ({userData.role})
+                    {userData.full_name} ({userData.role})
                   </Text>
                 </div>
                 <Text style={{ display: 'block', marginBottom: 16 }}>
