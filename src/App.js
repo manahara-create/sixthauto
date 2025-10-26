@@ -12,12 +12,20 @@ import ResetPassword from "./components/Auth/ResetPassword";
 import AdminDashboard from "./components/Dashboard/AdminDashboard";
 import HRDashboard from "./components/Dashboard/HRDashboard";
 import ManagerDashboard from "./components/Dashboard/ManagerDashboard";
-import AccountantDashboard from "./components/Dashboard/AccountantDashboard";
+import AccountantDashboard from "./components/Dashboard/Accountant/AccountantDashboard";
 import CEODashboard from "./components/Dashboard/CEODashboard";
 import EmployeeDashboard from "./components/Dashboard/EmployeeDashboard";
 
 // Layout
 import DashboardLayout from "./components/Layout/DashboardLayout";
+
+//Accountant Component
+import AccountantEPFETF from "./components/Dashboard/Accountant/AccountantEPFETF";
+import AccountantKPI from "./components/Dashboard/Accountant/AccountantKPI";
+import AccountantLoan from "./components/Dashboard/Accountant/AccountantLoan";
+import AccountantPayRoll from "./components/Dashboard/Accountant/AccountantPayRol";
+import AccountantReport from "./components/Dashboard/Accountant/AccountantReport";
+import AccountantSalary from "./components/Dashboard/Accountant/AccountantSalary";
 
 function App() {
   return (
@@ -88,6 +96,38 @@ function App() {
           {/* ---------- DEFAULT REDIRECTS ---------- */}
           <Route path="/" element={<Navigate to="/login" replace />} />
           <Route path="*" element={<Navigate to="/login" replace />} />
+
+          {/* ---------- ACCOUNTANT REDIRECTS ---------- */}
+          <Route path="/accountant/epf-etf" element={
+            <DashboardLayout>
+              <AccountantEPFETF />
+            </DashboardLayout>
+          } />
+          <Route path="/accountant/kpi" element={
+            <DashboardLayout>
+              <AccountantKPI />
+            </DashboardLayout>
+          } />
+          <Route path="/accountant/loan" element={
+            <DashboardLayout>
+              <AccountantLoan />
+            </DashboardLayout>
+          } />
+          <Route path="/accountant/payroll" element={
+            <DashboardLayout>
+              <AccountantPayRoll />
+            </DashboardLayout>
+          } />
+          <Route path="/accountant/report" element={
+            <DashboardLayout>
+              <AccountantReport />
+            </DashboardLayout>
+          } />
+          <Route path="/accountant/salary" element={
+            <DashboardLayout>
+              <AccountantSalary />
+            </DashboardLayout>
+          } />
         </Routes>
       </Router>
     </ConfigProvider>
