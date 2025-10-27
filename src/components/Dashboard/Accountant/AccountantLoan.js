@@ -17,7 +17,8 @@ import {
   Popconfirm,
   Badge,
   List,
-  Progress
+  Progress,
+  Input
 } from 'antd';
 import {
   DollarOutlined,
@@ -25,13 +26,18 @@ import {
   CloseCircleOutlined,
   EyeOutlined,
   PlusOutlined,
-  SafetyCertificateOutlined
+  SafetyCertificateOutlined,
+  EditOutlined,
+  DeleteOutlined,
+  SearchOutlined
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
+import { supabase } from '../../../services/supabase';
 
 const { Option } = Select;
+const { Search } = Input;
 
-const AccountantLoan = ({ dateRange, onRefresh }) => {
+const AccountantLoan = ({ dateRange, onRefresh, currentUser }) => {
   const [loading, setLoading] = useState(false);
   const [loanRequests, setLoanRequests] = useState([]);
   const [loanTypes, setLoanTypes] = useState([]);
@@ -41,6 +47,8 @@ const AccountantLoan = ({ dateRange, onRefresh }) => {
   const [eligibilityVisible, setEligibilityVisible] = useState(false);
   const [selectedLoan, setSelectedLoan] = useState(null);
   const [selectedEmployee, setSelectedEmployee] = useState(null);
+  const [searchText, setSearchText] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
   
   // Form states
   const [formData, setFormData] = useState({
@@ -59,51 +67,50 @@ const AccountantLoan = ({ dateRange, onRefresh }) => {
   const fetchData = async () => {
     setLoading(true);
     try {
-      // Mock data - Replace with Supabase queries
-      const mockLoans = [
-        {
-          loanrequestid: '1',
-          employee: { full_name: 'John Doe', department: 'Engineering', basicsalary: 5000 },
-          loantype: { loantype: 'Staff Loan', description: 'Regular staff loan' },
-          amount: 10000,
-          duration: 12,
-          interestrate: 5,
-          date: '2025-10-15',
-          status: 'pending',
-          empid: 'E001'
-        },
-        {
-          loanrequestid: '2',
-          employee: { full_name: 'Jane Smith', department: 'Marketing', basicsalary: 4500 },
-          loantype: { loantype: 'Emergency Loan', description: 'Emergency financial support' },
-          amount: 5000,
-          duration: 6,
-          interestrate: 3,
-          date: '2025-10-14',
-          status: 'approved',
-          empid: 'E002'
-        }
-      ];
+      // Fetch loan requests
+      const { data: loanData, error: loanError } = await supabase
+        .from('loanrequest')
+        .select(`
+          loanrequestid,
+          empid,
+          loantypeid,
+          amount,
+          duration,
+          interestrate,
+          date,
+          status,
+          processedby,
+          processedat,
+          remarks,
+          employee:employee(full_name, department, basicsalary, role),
+          loantype:loantype(loantype, description, max_amount, max_duration, interest_rate)
+        `)
+        .order('date', { ascending: false });
 
-      const mockLoanTypes = [
-        { loantypeid: 'L001', loantype: 'Staff Loan', max_amount: 15000, max_duration: 24, interest_rate: 5 },
-        { loantypeid: 'L002', loantype: 'Emergency Loan', max_amount: 8000, max_duration: 12, interest_rate: 3 },
-        { loantypeid: 'L003', loantype: 'Home Loan', max_amount: 300000, max_duration: 60, interest_rate: 7 },
-        { loantypeid: 'L004', loantype: 'Vehicle Loan', max_amount: 100000, max_duration: 48, interest_rate: 6 }
-      ];
+      if (loanError) throw loanError;
 
-      const mockEmployees = [
-        { empid: 'E001', full_name: 'John Doe', department: 'Engineering', basicsalary: 5000, role: 'permanent' },
-        { empid: 'E002', full_name: 'Jane Smith', department: 'Marketing', basicsalary: 4500, role: 'permanent' },
-        { empid: 'E003', full_name: 'Bob Johnson', department: 'Sales', basicsalary: 4000, role: 'permanent' }
-      ];
+      // Fetch loan types
+      const { data: loanTypeData, error: loanTypeError } = await supabase
+        .from('loantype')
+        .select('*')
+        .order('loantype');
 
-      await new Promise(resolve => setTimeout(resolve, 800));
-      
-      setLoanRequests(mockLoans);
-      setLoanTypes(mockLoanTypes);
-      setEmployees(mockEmployees);
+      if (loanTypeError) throw loanTypeError;
+
+      // Fetch employees
+      const { data: employeeData, error: employeeError } = await supabase
+        .from('employee')
+        .select('empid, full_name, department, basicsalary, role')
+        .eq('status', 'Active')
+        .order('full_name');
+
+      if (employeeError) throw employeeError;
+
+      setLoanRequests(loanData || []);
+      setLoanTypes(loanTypeData || []);
+      setEmployees(employeeData || []);
     } catch (error) {
+      console.error('Error fetching loan data:', error);
       message.error('Failed to load loan data');
     } finally {
       setLoading(false);
@@ -112,24 +119,96 @@ const AccountantLoan = ({ dateRange, onRefresh }) => {
 
   const handleApproveLoan = async (loanId) => {
     try {
-      // Supabase update
-      await new Promise(resolve => setTimeout(resolve, 500));
+      const { error } = await supabase
+        .from('loanrequest')
+        .update({
+          status: 'approved',
+          processedby: currentUser?.id,
+          processedat: new Date().toISOString()
+        })
+        .eq('loanrequestid', loanId);
+
+      if (error) throw error;
+
+      // Log operation
+      await supabase
+        .from('accountant_operations')
+        .insert({
+          operation: 'APPROVE_LOAN',
+          record_id: loanId,
+          accountant_id: currentUser?.id,
+          details: `Approved loan request ${loanId}`,
+          operation_time: new Date().toISOString()
+        });
+
       message.success('Loan approved successfully!');
       fetchData();
       onRefresh?.();
     } catch (error) {
+      console.error('Error approving loan:', error);
       message.error('Failed to approve loan');
     }
   };
 
   const handleRejectLoan = async (loanId) => {
     try {
-      await new Promise(resolve => setTimeout(resolve, 500));
+      const { error } = await supabase
+        .from('loanrequest')
+        .update({
+          status: 'rejected',
+          processedby: currentUser?.id,
+          processedat: new Date().toISOString()
+        })
+        .eq('loanrequestid', loanId);
+
+      if (error) throw error;
+
+      // Log operation
+      await supabase
+        .from('accountant_operations')
+        .insert({
+          operation: 'REJECT_LOAN',
+          record_id: loanId,
+          accountant_id: currentUser?.id,
+          details: `Rejected loan request ${loanId}`,
+          operation_time: new Date().toISOString()
+        });
+
       message.success('Loan rejected');
       fetchData();
       onRefresh?.();
     } catch (error) {
+      console.error('Error rejecting loan:', error);
       message.error('Failed to reject loan');
+    }
+  };
+
+  const handleDeleteLoan = async (loanId) => {
+    try {
+      const { error } = await supabase
+        .from('loanrequest')
+        .delete()
+        .eq('loanrequestid', loanId);
+
+      if (error) throw error;
+
+      // Log operation
+      await supabase
+        .from('accountant_operations')
+        .insert({
+          operation: 'DELETE_LOAN',
+          record_id: loanId,
+          accountant_id: currentUser?.id,
+          details: `Deleted loan request ${loanId}`,
+          operation_time: new Date().toISOString()
+        });
+
+      message.success('Loan request deleted successfully!');
+      fetchData();
+      onRefresh?.();
+    } catch (error) {
+      console.error('Error deleting loan:', error);
+      message.error('Failed to delete loan');
     }
   };
 
@@ -139,14 +218,45 @@ const AccountantLoan = ({ dateRange, onRefresh }) => {
       return;
     }
 
+    if (!currentUser) {
+      message.error('User not authenticated');
+      return;
+    }
+
     try {
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      const { data, error } = await supabase
+        .from('loanrequest')
+        .insert({
+          empid: formData.employeeId,
+          loantypeid: formData.loanTypeId,
+          amount: formData.amount,
+          duration: formData.duration,
+          interestrate: formData.interestRate,
+          date: formData.loanDate.format('YYYY-MM-DD'),
+          status: 'pending'
+        })
+        .select();
+
+      if (error) throw error;
+
+      // Log operation
+      await supabase
+        .from('accountant_operations')
+        .insert({
+          operation: 'CREATE_LOAN',
+          record_id: data[0].loanrequestid,
+          accountant_id: currentUser.id,
+          details: `Created loan request for employee ${formData.employeeId} - Amount: $${formData.amount}`,
+          operation_time: new Date().toISOString()
+        });
+
       message.success('Loan request created successfully!');
       setCreateVisible(false);
       resetForm();
       fetchData();
       onRefresh?.();
     } catch (error) {
+      console.error('Error creating loan:', error);
       message.error('Failed to create loan');
     }
   };
@@ -204,6 +314,13 @@ const AccountantLoan = ({ dateRange, onRefresh }) => {
 
     return eligibility;
   };
+
+  const filteredData = loanRequests.filter(loan => {
+    const matchesSearch = loan.employee?.full_name?.toLowerCase().includes(searchText.toLowerCase()) ||
+                         loan.employee?.department?.toLowerCase().includes(searchText.toLowerCase());
+    const matchesStatus = statusFilter === 'all' || loan.status === statusFilter;
+    return matchesSearch && matchesStatus;
+  });
 
   const columns = [
     {
@@ -269,7 +386,7 @@ const AccountantLoan = ({ dateRange, onRefresh }) => {
     {
       title: 'Actions',
       key: 'actions',
-      width: 280,
+      width: 300,
       fixed: 'right',
       render: (_, record) => (
         <Space size="small">
@@ -308,11 +425,25 @@ const AccountantLoan = ({ dateRange, onRefresh }) => {
               </Popconfirm>
             </>
           )}
+          <Popconfirm
+            title="Delete this loan request?"
+            onConfirm={() => handleDeleteLoan(record.loanrequestid)}
+            okText="Yes"
+            cancelText="No"
+          >
+            <Button 
+              type="link" 
+              danger 
+              size="small" 
+              icon={<DeleteOutlined />}
+            >
+              Delete
+            </Button>
+          </Popconfirm>
           <Button
             size="small"
             onClick={() => {
-              const emp = employees.find(e => e.empid === record.empid);
-              setSelectedEmployee(emp);
+              setSelectedEmployee(record.employee);
               setEligibilityVisible(true);
             }}
           >
@@ -324,11 +455,11 @@ const AccountantLoan = ({ dateRange, onRefresh }) => {
   ];
 
   const stats = {
-    total: loanRequests.length,
-    pending: loanRequests.filter(l => l.status === 'pending').length,
-    approved: loanRequests.filter(l => l.status === 'approved').length,
-    rejected: loanRequests.filter(l => l.status === 'rejected').length,
-    totalAmount: loanRequests.reduce((sum, l) => sum + (l.amount || 0), 0)
+    total: filteredData.length,
+    pending: filteredData.filter(l => l.status === 'pending').length,
+    approved: filteredData.filter(l => l.status === 'approved').length,
+    rejected: filteredData.filter(l => l.status === 'rejected').length,
+    totalAmount: filteredData.reduce((sum, l) => sum + (l.amount || 0), 0)
   };
 
   return (
@@ -380,23 +511,41 @@ const AccountantLoan = ({ dateRange, onRefresh }) => {
       <Card
         title="Loan Requests"
         extra={
-          <Button
-            type="primary"
-            icon={<PlusOutlined />}
-            onClick={() => setCreateVisible(true)}
-          >
-            Create Loan Request
-          </Button>
+          <Space>
+            <Search
+              placeholder="Search by name or department"
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+              style={{ width: 200 }}
+            />
+            <Select
+              value={statusFilter}
+              onChange={setStatusFilter}
+              style={{ width: 120 }}
+            >
+              <Option value="all">All Status</Option>
+              <Option value="pending">Pending</Option>
+              <Option value="approved">Approved</Option>
+              <Option value="rejected">Rejected</Option>
+            </Select>
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              onClick={() => setCreateVisible(true)}
+            >
+              Create Loan Request
+            </Button>
+          </Space>
         }
         style={{ borderRadius: 12, boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}
       >
         <Table
           columns={columns}
-          dataSource={loanRequests}
+          dataSource={filteredData}
           loading={loading}
           rowKey="loanrequestid"
           pagination={{ pageSize: 10 }}
-          scroll={{ x: 1400 }}
+          scroll={{ x: 1500 }}
         />
       </Card>
 

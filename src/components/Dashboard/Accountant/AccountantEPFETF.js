@@ -20,13 +20,16 @@ import {
   BankOutlined,
   PlusOutlined,
   PercentageOutlined,
-  DollarOutlined
+  DollarOutlined,
+  DeleteOutlined,
+  EditOutlined
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
+import { supabase } from '../../../services/supabase';
 
 const { Option } = Select;
 
-const AccountantEPFETF = ({ dateRange, onRefresh }) => {
+const AccountantEPFETF = ({ dateRange, onRefresh, currentUser }) => {
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('epf');
   const [employees, setEmployees] = useState([]);
@@ -36,6 +39,7 @@ const AccountantEPFETF = ({ dateRange, onRefresh }) => {
   const [basicSalary, setBasicSalary] = useState(0);
   const [selectedMonth, setSelectedMonth] = useState(dayjs());
   const [calculation, setCalculation] = useState(null);
+  const [editRecord, setEditRecord] = useState(null);
 
   useEffect(() => {
     fetchEmployees();
@@ -47,41 +51,65 @@ const AccountantEPFETF = ({ dateRange, onRefresh }) => {
   }, [basicSalary, activeTab]);
 
   const fetchEmployees = async () => {
-    const mockEmployees = [
-      { empid: 'E001', full_name: 'John Doe', department: 'Engineering', basicsalary: 5000 },
-      { empid: 'E002', full_name: 'Jane Smith', department: 'Marketing', basicsalary: 4500 },
-      { empid: 'E003', full_name: 'Bob Johnson', department: 'Sales', basicsalary: 4000 }
-    ];
-    setEmployees(mockEmployees);
+    try {
+      const { data, error } = await supabase
+        .from('employee')
+        .select('empid, full_name, department, basicsalary')
+        .eq('status', 'Active')
+        .order('full_name');
+
+      if (error) throw error;
+      setEmployees(data || []);
+    } catch (error) {
+      console.error('Error fetching employees:', error);
+      message.error('Failed to load employees');
+    }
   };
 
   const fetchContributions = async () => {
-    const mockEPF = [
-      {
-        id: '1',
-        employee: { full_name: 'John Doe', department: 'Engineering' },
-        basicsalary: 5000,
-        employeecontribution: 400,
-        employercontribution: 600,
-        totalcontribution: 1000,
-        month: '2025-10-01',
-        status: 'processed'
-      }
-    ];
+    try {
+      // Fetch EPF data
+      const { data: epfData, error: epfError } = await supabase
+        .from('epf_contributions')
+        .select(`
+          id,
+          empid,
+          basicsalary,
+          employeecontribution,
+          employercontribution,
+          totalcontribution,
+          month,
+          status,
+          processed_by,
+          employee:employee(full_name, department)
+        `)
+        .order('month', { ascending: false });
 
-    const mockETF = [
-      {
-        id: '1',
-        employee: { full_name: 'John Doe', department: 'Engineering' },
-        basicsalary: 5000,
-        employercontribution: 150,
-        month: '2025-10-01',
-        status: 'processed'
-      }
-    ];
+      if (epfError) throw epfError;
 
-    setEpfData(mockEPF);
-    setEtfData(mockETF);
+      // Fetch ETF data
+      const { data: etfData, error: etfError } = await supabase
+        .from('etf_contributions')
+        .select(`
+          id,
+          empid,
+          basicsalary,
+          employercontribution,
+          month,
+          status,
+          processed_by,
+          employee:employee(full_name, department)
+        `)
+        .order('month', { ascending: false });
+
+      if (etfError) throw etfError;
+
+      setEpfData(epfData || []);
+      setEtfData(etfData || []);
+    } catch (error) {
+      console.error('Error fetching contributions:', error);
+      message.error('Failed to load contribution data');
+    }
   };
 
   const calculateContributions = () => {
@@ -117,15 +145,182 @@ const AccountantEPFETF = ({ dateRange, onRefresh }) => {
       return;
     }
 
+    if (!currentUser) {
+      message.error('User not authenticated');
+      return;
+    }
+
     setLoading(true);
     try {
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      if (activeTab === 'epf') {
+        const { data, error } = await supabase
+          .from('epf_contributions')
+          .insert({
+            empid: selectedEmployee,
+            basicsalary: basicSalary,
+            employeecontribution: calculation.employeeContribution,
+            employercontribution: calculation.employerContribution,
+            totalcontribution: calculation.total,
+            month: selectedMonth.format('YYYY-MM-01'),
+            processed_by: currentUser.id,
+            status: 'processed'
+          })
+          .select();
+
+        if (error) throw error;
+
+        // Log operation
+        await supabase
+          .from('accountant_operations')
+          .insert({
+            operation: 'EPF_CONTRIBUTION',
+            record_id: data[0].id,
+            accountant_id: currentUser.id,
+            details: `Processed EPF for employee ${selectedEmployee} - Amount: $${calculation.total}`,
+            operation_time: new Date().toISOString()
+          });
+      } else {
+        const { data, error } = await supabase
+          .from('etf_contributions')
+          .insert({
+            empid: selectedEmployee,
+            basicsalary: basicSalary,
+            employercontribution: calculation.total,
+            month: selectedMonth.format('YYYY-MM-01'),
+            processed_by: currentUser.id,
+            status: 'processed'
+          })
+          .select();
+
+        if (error) throw error;
+
+        // Log operation
+        await supabase
+          .from('accountant_operations')
+          .insert({
+            operation: 'ETF_CONTRIBUTION',
+            record_id: data[0].id,
+            accountant_id: currentUser.id,
+            details: `Processed ETF for employee ${selectedEmployee} - Amount: $${calculation.total}`,
+            operation_time: new Date().toISOString()
+          });
+      }
+
       message.success(`${activeTab.toUpperCase()} contribution processed successfully!`);
       resetForm();
       fetchContributions();
       onRefresh?.();
     } catch (error) {
+      console.error('Error processing contribution:', error);
       message.error('Failed to process contribution');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDelete = async (record, type) => {
+    try {
+      if (type === 'epf') {
+        const { error } = await supabase
+          .from('epf_contributions')
+          .delete()
+          .eq('id', record.id);
+
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from('etf_contributions')
+          .delete()
+          .eq('id', record.id);
+
+        if (error) throw error;
+      }
+
+      // Log operation
+      await supabase
+        .from('accountant_operations')
+        .insert({
+          operation: `DELETE_${type.toUpperCase()}`,
+          record_id: record.id,
+          accountant_id: currentUser?.id,
+          details: `Deleted ${type} contribution for employee ${record.empid}`,
+          operation_time: new Date().toISOString()
+        });
+
+      message.success('Contribution record deleted successfully!');
+      fetchContributions();
+      onRefresh?.();
+    } catch (error) {
+      console.error('Error deleting record:', error);
+      message.error('Failed to delete record');
+    }
+  };
+
+  const handleEdit = (record, type) => {
+    setEditRecord({ ...record, type });
+    setSelectedEmployee(record.empid);
+    setBasicSalary(record.basicsalary);
+    setSelectedMonth(dayjs(record.month));
+  };
+
+  const handleUpdate = async () => {
+    if (!editRecord || !basicSalary) {
+      message.error('Please fill all required fields');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      if (editRecord.type === 'epf') {
+        const employeeEPF = Math.round(basicSalary * 0.08);
+        const employerEPF = Math.round(basicSalary * 0.12);
+        
+        const { error } = await supabase
+          .from('epf_contributions')
+          .update({
+            basicsalary: basicSalary,
+            employeecontribution: employeeEPF,
+            employercontribution: employerEPF,
+            totalcontribution: employeeEPF + employerEPF,
+            month: selectedMonth.format('YYYY-MM-01')
+          })
+          .eq('id', editRecord.id);
+
+        if (error) throw error;
+      } else {
+        const employerETF = Math.round(basicSalary * 0.03);
+        
+        const { error } = await supabase
+          .from('etf_contributions')
+          .update({
+            basicsalary: basicSalary,
+            employercontribution: employerETF,
+            month: selectedMonth.format('YYYY-MM-01')
+          })
+          .eq('id', editRecord.id);
+
+        if (error) throw error;
+      }
+
+      // Log operation
+      await supabase
+        .from('accountant_operations')
+        .insert({
+          operation: `UPDATE_${editRecord.type.toUpperCase()}`,
+          record_id: editRecord.id,
+          accountant_id: currentUser?.id,
+          details: `Updated ${editRecord.type} contribution for employee ${editRecord.empid}`,
+          operation_time: new Date().toISOString()
+        });
+
+      message.success('Contribution record updated successfully!');
+      resetForm();
+      setEditRecord(null);
+      fetchContributions();
+      onRefresh?.();
+    } catch (error) {
+      console.error('Error updating record:', error);
+      message.error('Failed to update record');
     } finally {
       setLoading(false);
     }
@@ -136,6 +331,7 @@ const AccountantEPFETF = ({ dateRange, onRefresh }) => {
     setBasicSalary(0);
     setSelectedMonth(dayjs());
     setCalculation(null);
+    setEditRecord(null);
   };
 
   const epfColumns = [
@@ -153,19 +349,19 @@ const AccountantEPFETF = ({ dateRange, onRefresh }) => {
       title: 'Basic Salary',
       dataIndex: 'basicsalary',
       key: 'basicsalary',
-      render: (val) => `${val?.toLocaleString()}`
+      render: (val) => `$${val?.toLocaleString()}`
     },
     {
       title: 'Employee (8%)',
       dataIndex: 'employeecontribution',
       key: 'employeecontribution',
-      render: (val) => `${val?.toLocaleString()}`
+      render: (val) => `$${val?.toLocaleString()}`
     },
     {
       title: 'Employer (12%)',
       dataIndex: 'employercontribution',
       key: 'employercontribution',
-      render: (val) => `${val?.toLocaleString()}`
+      render: (val) => `$${val?.toLocaleString()}`
     },
     {
       title: 'Total (20%)',
@@ -184,6 +380,32 @@ const AccountantEPFETF = ({ dateRange, onRefresh }) => {
       dataIndex: 'status',
       key: 'status',
       render: (status) => <Tag color="success">{status}</Tag>
+    },
+    {
+      title: 'Actions',
+      key: 'actions',
+      width: 120,
+      render: (_, record) => (
+        <Space size="small">
+          <Button
+            type="link"
+            icon={<EditOutlined />}
+            onClick={() => handleEdit(record, 'epf')}
+            size="small"
+          >
+            Edit
+          </Button>
+          <Button
+            type="link"
+            danger
+            icon={<DeleteOutlined />}
+            onClick={() => handleDelete(record, 'epf')}
+            size="small"
+          >
+            Delete
+          </Button>
+        </Space>
+      )
     }
   ];
 
@@ -202,7 +424,7 @@ const AccountantEPFETF = ({ dateRange, onRefresh }) => {
       title: 'Basic Salary',
       dataIndex: 'basicsalary',
       key: 'basicsalary',
-      render: (val) => `${val?.toLocaleString()}`
+      render: (val) => `$${val?.toLocaleString()}`
     },
     {
       title: 'Employer (3%)',
@@ -221,6 +443,32 @@ const AccountantEPFETF = ({ dateRange, onRefresh }) => {
       dataIndex: 'status',
       key: 'status',
       render: (status) => <Tag color="success">{status}</Tag>
+    },
+    {
+      title: 'Actions',
+      key: 'actions',
+      width: 120,
+      render: (_, record) => (
+        <Space size="small">
+          <Button
+            type="link"
+            icon={<EditOutlined />}
+            onClick={() => handleEdit(record, 'etf')}
+            size="small"
+          >
+            Edit
+          </Button>
+          <Button
+            type="link"
+            danger
+            icon={<DeleteOutlined />}
+            onClick={() => handleDelete(record, 'etf')}
+            size="small"
+          >
+            Delete
+          </Button>
+        </Space>
+      )
     }
   ];
 
@@ -274,7 +522,7 @@ const AccountantEPFETF = ({ dateRange, onRefresh }) => {
           <Row gutter={24}>
             <Col xs={24} lg={14}>
               <Card
-                title={<><PlusOutlined /> Process EPF</>}
+                title={<><PlusOutlined /> {editRecord ? 'Edit EPF' : 'Process EPF'}</>}
                 style={{ marginBottom: 24 }}
               >
                 <Alert
@@ -297,6 +545,7 @@ const AccountantEPFETF = ({ dateRange, onRefresh }) => {
                         const emp = employees.find(e => e.empid === empid);
                         setBasicSalary(emp?.basicsalary || 0);
                       }}
+                      disabled={!!editRecord}
                     >
                       {employees.map(emp => (
                         <Option key={emp.empid} value={emp.empid}>
@@ -329,15 +578,22 @@ const AccountantEPFETF = ({ dateRange, onRefresh }) => {
                     />
                   </div>
 
-                  <Button
-                    type="primary"
-                    block
-                    loading={loading}
-                    disabled={!calculation}
-                    onClick={handleSubmit}
-                  >
-                    Process EPF Contribution
-                  </Button>
+                  <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+                    {editRecord && (
+                      <Button onClick={resetForm}>
+                        Cancel
+                      </Button>
+                    )}
+                    <Button
+                      type="primary"
+                      loading={loading}
+                      disabled={!calculation}
+                      onClick={editRecord ? handleUpdate : handleSubmit}
+                      style={{ flex: 1 }}
+                    >
+                      {editRecord ? 'Update EPF Contribution' : 'Process EPF Contribution'}
+                    </Button>
+                  </Space>
                 </Space>
               </Card>
 
@@ -347,7 +603,7 @@ const AccountantEPFETF = ({ dateRange, onRefresh }) => {
                   dataSource={epfData}
                   rowKey="id"
                   pagination={{ pageSize: 5 }}
-                  scroll={{ x: 800 }}
+                  scroll={{ x: 1000 }}
                 />
               </Card>
             </Col>
@@ -363,7 +619,7 @@ const AccountantEPFETF = ({ dateRange, onRefresh }) => {
                       <div style={{ marginBottom: 8, color: '#666' }}>Employee Contribution (8%)</div>
                       <Progress
                         percent={8}
-                        format={() => `${calculation.employeeContribution.toLocaleString()}`}
+                        format={() => `$${calculation.employeeContribution.toLocaleString()}`}
                         strokeColor="#1890ff"
                       />
                     </div>
@@ -371,7 +627,7 @@ const AccountantEPFETF = ({ dateRange, onRefresh }) => {
                       <div style={{ marginBottom: 8, color: '#666' }}>Employer Contribution (12%)</div>
                       <Progress
                         percent={12}
-                        format={() => `${calculation.employerContribution.toLocaleString()}`}
+                        format={() => `$${calculation.employerContribution.toLocaleString()}`}
                         strokeColor="#52c41a"
                       />
                     </div>
@@ -394,7 +650,7 @@ const AccountantEPFETF = ({ dateRange, onRefresh }) => {
           <Row gutter={24}>
             <Col xs={24} lg={14}>
               <Card
-                title={<><PlusOutlined /> Process ETF</>}
+                title={<><PlusOutlined /> {editRecord ? 'Edit ETF' : 'Process ETF'}</>}
                 style={{ marginBottom: 24 }}
               >
                 <Alert
@@ -417,6 +673,7 @@ const AccountantEPFETF = ({ dateRange, onRefresh }) => {
                         const emp = employees.find(e => e.empid === empid);
                         setBasicSalary(emp?.basicsalary || 0);
                       }}
+                      disabled={!!editRecord}
                     >
                       {employees.map(emp => (
                         <Option key={emp.empid} value={emp.empid}>
@@ -449,15 +706,22 @@ const AccountantEPFETF = ({ dateRange, onRefresh }) => {
                     />
                   </div>
 
-                  <Button
-                    type="primary"
-                    block
-                    loading={loading}
-                    disabled={!calculation}
-                    onClick={handleSubmit}
-                  >
-                    Process ETF Contribution
-                  </Button>
+                  <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+                    {editRecord && (
+                      <Button onClick={resetForm}>
+                        Cancel
+                      </Button>
+                    )}
+                    <Button
+                      type="primary"
+                      loading={loading}
+                      disabled={!calculation}
+                      onClick={editRecord ? handleUpdate : handleSubmit}
+                      style={{ flex: 1 }}
+                    >
+                      {editRecord ? 'Update ETF Contribution' : 'Process ETF Contribution'}
+                    </Button>
+                  </Space>
                 </Space>
               </Card>
 
@@ -467,7 +731,7 @@ const AccountantEPFETF = ({ dateRange, onRefresh }) => {
                   dataSource={etfData}
                   rowKey="id"
                   pagination={{ pageSize: 5 }}
-                  scroll={{ x: 700 }}
+                  scroll={{ x: 900 }}
                 />
               </Card>
             </Col>
@@ -483,7 +747,7 @@ const AccountantEPFETF = ({ dateRange, onRefresh }) => {
                       <div style={{ marginBottom: 8, color: '#666' }}>Employer Contribution (3%)</div>
                       <Progress
                         percent={3}
-                        format={() => `${calculation.employerContribution.toLocaleString()}`}
+                        format={() => `$${calculation.employerContribution.toLocaleString()}`}
                         strokeColor="#52c41a"
                       />
                     </div>

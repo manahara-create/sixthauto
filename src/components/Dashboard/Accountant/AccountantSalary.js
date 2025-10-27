@@ -1,3 +1,4 @@
+// AccountantSalary.js
 import React, { useState, useEffect } from 'react';
 import { 
   Card, 
@@ -23,10 +24,11 @@ import {
   HistoryOutlined
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
+import { supabase } from '../../../services/supabase';
 
 const { Option } = Select;
 
-const AccountantSalary = ({ dateRange, onRefresh }) => {
+const AccountantSalary = ({ dateRange, onRefresh, currentUser }) => {
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
   const [employees, setEmployees] = useState([]);
@@ -40,34 +42,54 @@ const AccountantSalary = ({ dateRange, onRefresh }) => {
   }, [dateRange]);
 
   const fetchEmployees = async () => {
-    // Simulated data - Replace with Supabase
-    const mockEmployees = [
-      { empid: 'E001', full_name: 'John Doe', department: 'Engineering', basicsalary: 5000 },
-      { empid: 'E002', full_name: 'Jane Smith', department: 'Marketing', basicsalary: 4500 },
-      { empid: 'E003', full_name: 'Bob Johnson', department: 'Sales', basicsalary: 4000 }
-    ];
-    setEmployees(mockEmployees);
+    try {
+      const { data, error } = await supabase
+        .from('employee')
+        .select('empid, full_name, department, basicsalary')
+        .eq('status', 'Active')
+        .order('full_name');
+
+      if (error) throw error;
+      setEmployees(data || []);
+    } catch (error) {
+      console.error('Error fetching employees:', error);
+      message.error('Failed to load employees');
+    }
   };
 
   const fetchRecentSalaries = async () => {
-    // Simulated data
-    const mockRecent = [
-      {
-        key: '1',
-        employee: 'John Doe',
-        date: '2025-10-15',
-        amount: 6500,
+    try {
+      const { data, error } = await supabase
+        .from('salary')
+        .select(`
+          salaryid,
+          empid,
+          basicsalary,
+          otpay,
+          bonuspay,
+          incrementpay,
+          totalsalary,
+          salarydate,
+          processed_at,
+          employee:employee(full_name)
+        `)
+        .order('salarydate', { ascending: false })
+        .limit(10);
+
+      if (error) throw error;
+
+      const formattedData = data?.map(item => ({
+        key: item.salaryid,
+        employee: item.employee?.full_name || 'Unknown',
+        date: item.salarydate,
+        amount: item.totalsalary,
         status: 'processed'
-      },
-      {
-        key: '2',
-        employee: 'Jane Smith',
-        date: '2025-10-14',
-        amount: 5000,
-        status: 'processed'
-      }
-    ];
-    setRecentSalaries(mockRecent);
+      })) || [];
+
+      setRecentSalaries(formattedData);
+    } catch (error) {
+      console.error('Error fetching recent salaries:', error);
+    }
   };
 
   const handleEmployeeChange = (empid) => {
@@ -109,11 +131,42 @@ const AccountantSalary = ({ dateRange, onRefresh }) => {
       return;
     }
 
+    if (!currentUser) {
+      message.error('User not authenticated');
+      return;
+    }
+
     setLoading(true);
     try {
-      // Supabase insert query here
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
+      // Insert salary record
+      const { data, error } = await supabase
+        .from('salary')
+        .insert({
+          empid: values.employeeId,
+          basicsalary: calculations.basicSalary,
+          otpay: calculations.otPay,
+          bonuspay: calculations.bonusAmount,
+          incrementpay: calculations.incrementAmount,
+          totalsalary: calculations.netPayable,
+          salarydate: values.salaryDate.format('YYYY-MM-DD'),
+          processed_by: currentUser.id,
+          processed_at: new Date().toISOString()
+        })
+        .select();
+
+      if (error) throw error;
+
+      // Log operation
+      await supabase
+        .from('accountant_operations')
+        .insert({
+          operation: 'SALARY_PROCESSING',
+          record_id: data[0].salaryid,
+          accountant_id: currentUser.id,
+          details: `Processed salary for employee ${values.employeeId} - Amount: $${calculations.netPayable}`,
+          operation_time: new Date().toISOString()
+        });
+
       message.success('Salary processed successfully!');
       form.resetFields();
       setCalculations(null);
@@ -121,6 +174,7 @@ const AccountantSalary = ({ dateRange, onRefresh }) => {
       fetchRecentSalaries();
       onRefresh?.();
     } catch (error) {
+      console.error('Error processing salary:', error);
       message.error('Failed to process salary');
     } finally {
       setLoading(false);
@@ -143,7 +197,7 @@ const AccountantSalary = ({ dateRange, onRefresh }) => {
       title: 'Amount',
       dataIndex: 'amount',
       key: 'amount',
-      render: (val) => `$${val.toLocaleString()}`
+      render: (val) => `$${val?.toLocaleString()}`
     },
     {
       title: 'Status',

@@ -13,6 +13,7 @@ import {
   CalendarOutlined
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
+import { supabase } from '../../../services/supabase';
 
 // Import child components
 import AccountantPayroll from './AccountantPayRol';
@@ -37,35 +38,97 @@ const AccountantDashboard = () => {
     activeEmployees: 0,
     pendingPayments: 0
   });
-
-  const user = {
-    email: 'accountant@company.com',
-    name: 'Finance Team',
-    role: 'Accountant'
-  };
+  const [user, setUser] = useState(null);
 
   useEffect(() => {
+    fetchUserData();
     fetchDashboardData();
   }, [dateRange]);
+
+  const fetchUserData = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data: userData } = await supabase
+          .from('auth_users')
+          .select('*')
+          .eq('supabase_auth_id', user.id)
+          .single();
+        
+        setUser({
+          email: user.email,
+          name: userData?.full_name || 'Finance Team',
+          role: userData?.role || 'Accountant',
+          id: userData?.id
+        });
+      }
+    } catch (error) {
+      console.error('Error fetching user data:', error);
+    }
+  };
 
   const fetchDashboardData = async () => {
     setLoading(true);
     try {
-      // Simulated data - replace with actual Supabase queries
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
+      const [salaryData, epfData, etfData, loanData, employeeData] = await Promise.all([
+        // Total Salary
+        supabase
+          .from('salary')
+          .select('totalsalary')
+          .gte('salarydate', dateRange[0].format('YYYY-MM-DD'))
+          .lte('salarydate', dateRange[1].format('YYYY-MM-DD')),
+
+        // Total EPF
+        supabase
+          .from('epf_contributions')
+          .select('totalcontribution')
+          .gte('month', dateRange[0].format('YYYY-MM-DD'))
+          .lte('month', dateRange[1].format('YYYY-MM-DD')),
+
+        // Total ETF
+        supabase
+          .from('etf_contributions')
+          .select('employercontribution')
+          .gte('month', dateRange[0].format('YYYY-MM-DD'))
+          .lte('month', dateRange[1].format('YYYY-MM-DD')),
+
+        // Pending Loans
+        supabase
+          .from('loanrequest')
+          .select('*', { count: 'exact' })
+          .eq('status', 'pending'),
+
+        // Active Employees
+        supabase
+          .from('employee')
+          .select('*', { count: 'exact' })
+          .eq('status', 'Active')
+      ]);
+
       setDashboardStats({
-        totalSalary: 285000,
-        totalEPF: 57000,
-        totalETF: 8550,
-        pendingLoans: 12,
-        activeEmployees: 45,
-        pendingPayments: 8
+        totalSalary: salaryData.data?.reduce((sum, item) => sum + (item.totalsalary || 0), 0) || 0,
+        totalEPF: epfData.data?.reduce((sum, item) => sum + (item.totalcontribution || 0), 0) || 0,
+        totalETF: etfData.data?.reduce((sum, item) => sum + (item.employercontribution || 0), 0) || 0,
+        pendingLoans: loanData.count || 0,
+        activeEmployees: employeeData.count || 0,
+        pendingPayments: 0 // You can calculate this based on your business logic
       });
     } catch (error) {
+      console.error('Error fetching dashboard data:', error);
       message.error('Failed to load dashboard data');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await supabase.auth.signOut();
+      message.success('Logged out successfully');
+      // Redirect to login page
+      window.location.href = '/login';
+    } catch (error) {
+      message.error('Error logging out');
     }
   };
 
@@ -80,7 +143,11 @@ const AccountantDashboard = () => {
   ];
 
   const renderContent = () => {
-    const commonProps = { dateRange, onRefresh: fetchDashboardData };
+    const commonProps = { 
+      dateRange, 
+      onRefresh: fetchDashboardData,
+      currentUser: user 
+    };
 
     switch (currentView) {
       case 'payroll':
@@ -96,7 +163,7 @@ const AccountantDashboard = () => {
       case 'reports':
         return <AccountantReport {...commonProps} />;
       default:
-        return <DashboardOverview stats={dashboardStats} />;
+        return <DashboardOverview stats={dashboardStats} loading={loading} />;
     }
   };
 
@@ -123,8 +190,8 @@ const AccountantDashboard = () => {
           borderBottom: '1px solid rgba(255,255,255,0.1)'
         }}>
           <Avatar size={64} icon={<UserOutlined />} style={{ backgroundColor: '#1890ff', marginBottom: 12 }} />
-          <h3 style={{ color: '#fff', margin: 0, fontSize: 16 }}>{user.name}</h3>
-          <Tag color="blue" style={{ marginTop: 8 }}>{user.role}</Tag>
+          <h3 style={{ color: '#fff', margin: 0, fontSize: 16 }}>{user?.name || 'Loading...'}</h3>
+          <Tag color="blue" style={{ marginTop: 8 }}>{user?.role || 'Accountant'}</Tag>
         </div>
 
         <Menu
@@ -157,6 +224,7 @@ const AccountantDashboard = () => {
             danger 
             block 
             icon={<LogoutOutlined />}
+            onClick={handleLogout}
             style={{ borderRadius: 8 }}
           >
             Logout
@@ -202,7 +270,7 @@ const AccountantDashboard = () => {
   );
 };
 
-const DashboardOverview = ({ stats }) => {
+const DashboardOverview = ({ stats, loading }) => {
   const statCards = [
     {
       title: 'Total Salary Processed',
@@ -244,6 +312,14 @@ const DashboardOverview = ({ stats }) => {
       icon: <FileTextOutlined />
     }
   ];
+
+  if (loading) {
+    return (
+      <div style={{ padding: 24, textAlign: 'center' }}>
+        <Spin size="large" />
+      </div>
+    );
+  }
 
   return (
     <div style={{ padding: 24 }}>

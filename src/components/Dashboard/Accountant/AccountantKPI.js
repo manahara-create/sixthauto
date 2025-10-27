@@ -13,24 +13,29 @@ import {
   message,
   Progress,
   Tag,
-  Modal
+  Modal,
+  Popconfirm
 } from 'antd';
 import {
   TrophyOutlined,
   PlusOutlined,
   LineChartOutlined,
   RiseOutlined,
-  FallOutlined
+  FallOutlined,
+  EditOutlined,
+  DeleteOutlined
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
+import { supabase } from '../../../services/supabase';
 
 const { Option } = Select;
 
-const AccountantKPI = ({ dateRange, onRefresh }) => {
+const AccountantKPI = ({ dateRange, onRefresh, currentUser }) => {
   const [loading, setLoading] = useState(false);
   const [kpiData, setKpiData] = useState([]);
   const [employees, setEmployees] = useState([]);
   const [modalVisible, setModalVisible] = useState(false);
+  const [editRecord, setEditRecord] = useState(null);
   const [formData, setFormData] = useState({
     employeeId: null,
     kpiValue: 0,
@@ -44,45 +49,34 @@ const AccountantKPI = ({ dateRange, onRefresh }) => {
   const fetchData = async () => {
     setLoading(true);
     try {
-      // Mock data - Replace with Supabase
-      const mockKPI = [
-        {
-          kpiid: '1',
-          employee: { full_name: 'John Doe', department: 'Engineering' },
-          kpivalue: 85,
-          calculatedate: '2025-10-15',
-          kpiyear: 2025,
-          empid: 'E001'
-        },
-        {
-          kpiid: '2',
-          employee: { full_name: 'Jane Smith', department: 'Marketing' },
-          kpivalue: 92,
-          calculatedate: '2025-10-14',
-          kpiyear: 2025,
-          empid: 'E002'
-        },
-        {
-          kpiid: '3',
-          employee: { full_name: 'Bob Johnson', department: 'Sales' },
-          kpivalue: 78,
-          calculatedate: '2025-10-13',
-          kpiyear: 2025,
-          empid: 'E003'
-        }
-      ];
+      // Fetch KPI data
+      const { data: kpiData, error: kpiError } = await supabase
+        .from('kpi')
+        .select(`
+          kpiid,
+          empid,
+          kpivalue,
+          calculatedate,
+          kpiyear,
+          employee:employee(full_name, department)
+        `)
+        .order('calculatedate', { ascending: false });
 
-      const mockEmployees = [
-        { empid: 'E001', full_name: 'John Doe', department: 'Engineering', kpiscore: 85 },
-        { empid: 'E002', full_name: 'Jane Smith', department: 'Marketing', kpiscore: 92 },
-        { empid: 'E003', full_name: 'Bob Johnson', department: 'Sales', kpiscore: 78 }
-      ];
+      if (kpiError) throw kpiError;
 
-      await new Promise(resolve => setTimeout(resolve, 800));
-      
-      setKpiData(mockKPI);
-      setEmployees(mockEmployees);
+      // Fetch employees
+      const { data: employeeData, error: employeeError } = await supabase
+        .from('employee')
+        .select('empid, full_name, department, kpiscore')
+        .eq('status', 'Active')
+        .order('full_name');
+
+      if (employeeError) throw employeeError;
+
+      setKpiData(kpiData || []);
+      setEmployees(employeeData || []);
     } catch (error) {
+      console.error('Error fetching KPI data:', error);
       message.error('Failed to load KPI data');
     } finally {
       setLoading(false);
@@ -100,16 +94,112 @@ const AccountantKPI = ({ dateRange, onRefresh }) => {
       return;
     }
 
+    if (!currentUser) {
+      message.error('User not authenticated');
+      return;
+    }
+
     try {
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      message.success('KPI added successfully!');
+      if (editRecord) {
+        // Update existing KPI
+        const { error } = await supabase
+          .from('kpi')
+          .update({
+            kpivalue: formData.kpiValue,
+            calculatedate: formData.calculateDate.format('YYYY-MM-DD'),
+            kpiyear: formData.calculateDate.year()
+          })
+          .eq('kpiid', editRecord.kpiid);
+
+        if (error) throw error;
+
+        // Log operation
+        await supabase
+          .from('accountant_operations')
+          .insert({
+            operation: 'UPDATE_KPI',
+            record_id: editRecord.kpiid,
+            accountant_id: currentUser.id,
+            details: `Updated KPI for employee ${formData.employeeId} - Score: ${formData.kpiValue}`,
+            operation_time: new Date().toISOString()
+          });
+
+        message.success('KPI updated successfully!');
+      } else {
+        // Create new KPI
+        const { data, error } = await supabase
+          .from('kpi')
+          .insert({
+            empid: formData.employeeId,
+            kpivalue: formData.kpiValue,
+            calculatedate: formData.calculateDate.format('YYYY-MM-DD'),
+            kpiyear: formData.calculateDate.year()
+          })
+          .select();
+
+        if (error) throw error;
+
+        // Log operation
+        await supabase
+          .from('accountant_operations')
+          .insert({
+            operation: 'CREATE_KPI',
+            record_id: data[0].kpiid,
+            accountant_id: currentUser.id,
+            details: `Added KPI for employee ${formData.employeeId} - Score: ${formData.kpiValue}`,
+            operation_time: new Date().toISOString()
+          });
+
+        message.success('KPI added successfully!');
+      }
+
       setModalVisible(false);
       resetForm();
       fetchData();
       onRefresh?.();
     } catch (error) {
-      message.error('Failed to add KPI');
+      console.error('Error saving KPI:', error);
+      message.error('Failed to save KPI');
     }
+  };
+
+  const handleDelete = async (kpiId) => {
+    try {
+      const { error } = await supabase
+        .from('kpi')
+        .delete()
+        .eq('kpiid', kpiId);
+
+      if (error) throw error;
+
+      // Log operation
+      await supabase
+        .from('accountant_operations')
+        .insert({
+          operation: 'DELETE_KPI',
+          record_id: kpiId,
+          accountant_id: currentUser?.id,
+          details: `Deleted KPI record ${kpiId}`,
+          operation_time: new Date().toISOString()
+        });
+
+      message.success('KPI record deleted successfully!');
+      fetchData();
+      onRefresh?.();
+    } catch (error) {
+      console.error('Error deleting KPI:', error);
+      message.error('Failed to delete KPI');
+    }
+  };
+
+  const handleEdit = (record) => {
+    setEditRecord(record);
+    setFormData({
+      employeeId: record.empid,
+      kpiValue: record.kpivalue,
+      calculateDate: dayjs(record.calculatedate)
+    });
+    setModalVisible(true);
   };
 
   const resetForm = () => {
@@ -118,6 +208,7 @@ const AccountantKPI = ({ dateRange, onRefresh }) => {
       kpiValue: 0,
       calculateDate: dayjs()
     });
+    setEditRecord(null);
   };
 
   const getKPIStatus = (value) => {
@@ -179,14 +270,46 @@ const AccountantKPI = ({ dateRange, onRefresh }) => {
       key: 'trend',
       width: 100,
       render: (_, record) => {
-        // Simulated trend - in real app, compare with previous KPI
-        const trend = Math.random() > 0.5;
+        // Calculate trend based on previous KPI (simplified)
+        const trend = record.kpivalue > 80;
         return trend ? (
-          <Tag icon={<RiseOutlined />} color="success">+5%</Tag>
+          <Tag icon={<RiseOutlined />} color="success">Good</Tag>
         ) : (
-          <Tag icon={<FallOutlined />} color="error">-2%</Tag>
+          <Tag icon={<FallOutlined />} color="error">Needs Improvement</Tag>
         );
       }
+    },
+    {
+      title: 'Actions',
+      key: 'actions',
+      width: 120,
+      render: (_, record) => (
+        <Space size="small">
+          <Button
+            type="link"
+            icon={<EditOutlined />}
+            onClick={() => handleEdit(record)}
+            size="small"
+          >
+            Edit
+          </Button>
+          <Popconfirm
+            title="Delete this KPI record?"
+            onConfirm={() => handleDelete(record.kpiid)}
+            okText="Yes"
+            cancelText="No"
+          >
+            <Button
+              type="link"
+              danger
+              icon={<DeleteOutlined />}
+              size="small"
+            >
+              Delete
+            </Button>
+          </Popconfirm>
+        </Space>
+      )
     }
   ];
 
@@ -265,12 +388,13 @@ const AccountantKPI = ({ dateRange, onRefresh }) => {
           loading={loading}
           rowKey="kpiid"
           pagination={{ pageSize: 10 }}
+          scroll={{ x: 1200 }}
         />
       </Card>
 
-      {/* Add KPI Modal */}
+      {/* Add/Edit KPI Modal */}
       <Modal
-        title={<><TrophyOutlined /> Add KPI Score</>}
+        title={<><TrophyOutlined /> {editRecord ? 'Edit KPI Score' : 'Add KPI Score'}</>}
         open={modalVisible}
         onCancel={() => {
           setModalVisible(false);
@@ -289,6 +413,7 @@ const AccountantKPI = ({ dateRange, onRefresh }) => {
               onChange={(val) => setFormData({ ...formData, employeeId: val })}
               showSearch
               optionFilterProp="children"
+              disabled={!!editRecord}
             >
               {employees.map(emp => (
                 <Option key={emp.empid} value={emp.empid}>

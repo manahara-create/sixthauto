@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Card,
   Button,
@@ -8,8 +8,9 @@ import {
   Descriptions,
   Statistic,
   message,
-  Radio,
-  Spin
+  Spin,
+  DatePicker,
+  Select
 } from 'antd';
 import {
   FileWordOutlined,
@@ -18,43 +19,181 @@ import {
   DollarOutlined,
   BankOutlined,
   PieChartOutlined,
-  BarChartOutlined
+  BarChartOutlined,
+  FilterOutlined
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
+import { supabase } from '../../../services/supabase';
 
-const AccountantReport = ({ dateRange }) => {
+const { Option } = Select;
+const { RangePicker } = DatePicker;
+
+const AccountantReport = ({ dateRange, onRefresh, currentUser }) => {
   const [loading, setLoading] = useState(false);
   const [activeReport, setActiveReport] = useState(null);
+  const [reportData, setReportData] = useState({});
+  const [reportPeriod, setReportPeriod] = useState(dateRange);
+  const [reportType, setReportType] = useState('monthly');
+
+  useEffect(() => {
+    fetchReportSummary();
+  }, [reportPeriod, reportType]);
+
+  const fetchReportSummary = async () => {
+    try {
+      const startDate = reportPeriod[0].format('YYYY-MM-DD');
+      const endDate = reportPeriod[1].format('YYYY-MM-DD');
+
+      // Fetch payroll summary
+      const { data: payrollData, error: payrollError } = await supabase
+        .from('salary')
+        .select('totalsalary, basicsalary, otpay, bonuspay')
+        .gte('salarydate', startDate)
+        .lte('salarydate', endDate);
+
+      if (payrollError) throw payrollError;
+
+      // Fetch EPF/ETF summary
+      const { data: epfData, error: epfError } = await supabase
+        .from('epf_contributions')
+        .select('totalcontribution')
+        .gte('month', startDate)
+        .lte('month', endDate);
+
+      const { data: etfData, error: etfError } = await supabase
+        .from('etf_contributions')
+        .select('employercontribution')
+        .gte('month', startDate)
+        .lte('month', endDate);
+
+      if (epfError) throw epfError;
+      if (etfError) throw etfError;
+
+      // Fetch loan summary
+      const { data: loanData, error: loanError } = await supabase
+        .from('loanrequest')
+        .select('amount, status')
+        .gte('date', startDate)
+        .lte('date', endDate);
+
+      if (loanError) throw loanError;
+
+      // Fetch employee count
+      const { count: employeeCount, error: employeeError } = await supabase
+        .from('employee')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'Active');
+
+      if (employeeError) throw employeeError;
+
+      const totalSalary = payrollData?.reduce((sum, item) => sum + (item.totalsalary || 0), 0) || 0;
+      const totalOT = payrollData?.reduce((sum, item) => sum + (item.otpay || 0), 0) || 0;
+      const totalBonus = payrollData?.reduce((sum, item) => sum + (item.bonuspay || 0), 0) || 0;
+      const totalEPF = epfData?.reduce((sum, item) => sum + (item.totalcontribution || 0), 0) || 0;
+      const totalETF = etfData?.reduce((sum, item) => sum + (item.employercontribution || 0), 0) || 0;
+      const pendingLoans = loanData?.filter(loan => loan.status === 'pending').length || 0;
+
+      setReportData({
+        totalSalary,
+        totalOT,
+        totalBonus,
+        totalEPF,
+        totalETF,
+        totalLaborCost: totalSalary + totalEPF + totalETF + totalBonus,
+        employeeCount: employeeCount || 0,
+        pendingLoans,
+        avgSalary: payrollData?.length > 0 ? Math.round(totalSalary / payrollData.length) : 0,
+        records: payrollData?.length || 0
+      });
+    } catch (error) {
+      console.error('Error fetching report summary:', error);
+      message.error('Failed to load report data');
+    }
+  };
 
   const generatePayrollReport = async (format) => {
     setLoading(true);
     setActiveReport('payroll');
     try {
+      const startDate = reportPeriod[0].format('YYYY-MM-DD');
+      const endDate = reportPeriod[1].format('YYYY-MM-DD');
+
+      // Fetch detailed payroll data
+      const { data, error } = await supabase
+        .from('salary')
+        .select(`
+          salaryid,
+          empid,
+          basicsalary,
+          otpay,
+          bonuspay,
+          incrementpay,
+          totalsalary,
+          salarydate,
+          processed_at,
+          employee:employee(full_name, department)
+        `)
+        .gte('salarydate', startDate)
+        .lte('salarydate', endDate)
+        .order('salarydate', { ascending: false });
+
+      if (error) throw error;
+
+      // Save report record
+      const { data: reportRecord, error: reportError } = await supabase
+        .from('reports')
+        .insert({
+          name: `Payroll Report - ${reportPeriod[0].format('MMM D, YYYY')} to ${reportPeriod[1].format('MMM D, YYYY')}`,
+          type: 'payroll',
+          format: format,
+          created_by: currentUser?.id,
+          status: 'completed',
+          config: {
+            period: { start: startDate, end: endDate },
+            recordCount: data.length,
+            totalAmount: reportData.totalSalary
+          }
+        })
+        .select();
+
+      if (reportError) throw reportError;
+
+      // Log operation
+      await supabase
+        .from('accountant_operations')
+        .insert({
+          operation: 'GENERATE_PAYROLL_REPORT',
+          record_id: reportRecord[0].reportid,
+          accountant_id: currentUser?.id,
+          details: `Generated payroll report (${format}) for period ${startDate} to ${endDate}`,
+          operation_time: new Date().toISOString()
+        });
+
+      // Simulate file generation and download
       await new Promise(resolve => setTimeout(resolve, 2000));
       
-      // Simulated report data
-      const reportData = {
-        period: `${dateRange[0].format('MMM D, YYYY')} - ${dateRange[1].format('MMM D, YYYY')}`,
-        totalSalary: 285000,
-        records: 45,
-        avgSalary: 6333,
-        totalOT: 12500,
-        totalBonus: 25000
-      };
-
-      if (format === 'docx') {
-        // In real implementation, use docx library to generate Word document
-        message.success('Payroll report (DOCX) generated successfully!');
-      } else {
-        // In real implementation, use xlsx library to generate Excel
-        message.success('Payroll report (Excel) generated successfully!');
-      }
-      
-      // Simulate download
       const filename = `payroll-report-${dayjs().format('YYYY-MM-DD')}.${format === 'docx' ? 'docx' : 'xlsx'}`;
-      console.log('Downloading:', filename, reportData);
+      
+      // Create a blob and download link (simulated)
+      const blob = new Blob([JSON.stringify({
+        reportData: data,
+        summary: reportData,
+        period: `${reportPeriod[0].format('MMM D, YYYY')} - ${reportPeriod[1].format('MMM D, YYYY')}`
+      })], { type: 'application/json' });
+      
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      message.success(`Payroll report (${format.toUpperCase()}) generated successfully!`);
       
     } catch (error) {
+      console.error('Error generating payroll report:', error);
       message.error('Failed to generate report');
     } finally {
       setLoading(false);
@@ -66,23 +205,80 @@ const AccountantReport = ({ dateRange }) => {
     setLoading(true);
     setActiveReport('epf');
     try {
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      const reportData = {
-        period: `${dateRange[0].format('MMM D, YYYY')} - ${dateRange[1].format('MMM D, YYYY')}`,
-        totalEPF: 57000,
-        totalETF: 8550,
-        records: 45,
-        employeeContribution: 22800,
-        employerContribution: 34200
-      };
+      const startDate = reportPeriod[0].format('YYYY-MM-DD');
+      const endDate = reportPeriod[1].format('YYYY-MM-DD');
 
-      message.success(`EPF/ETF report (${format === 'docx' ? 'DOCX' : 'Excel'}) generated successfully!`);
-      
-      const filename = `epf-report-${dayjs().format('YYYY-MM-DD')}.${format === 'docx' ? 'docx' : 'xlsx'}`;
-      console.log('Downloading:', filename, reportData);
+      // Fetch EPF/ETF data
+      const { data: epfData, error: epfError } = await supabase
+        .from('epf_contributions')
+        .select(`
+          id,
+          empid,
+          basicsalary,
+          employeecontribution,
+          employercontribution,
+          totalcontribution,
+          month,
+          employee:employee(full_name, department)
+        `)
+        .gte('month', startDate)
+        .lte('month', endDate)
+        .order('month', { ascending: false });
+
+      const { data: etfData, error: etfError } = await supabase
+        .from('etf_contributions')
+        .select(`
+          id,
+          empid,
+          basicsalary,
+          employercontribution,
+          month,
+          employee:employee(full_name, department)
+        `)
+        .gte('month', startDate)
+        .lte('month', endDate)
+        .order('month', { ascending: false });
+
+      if (epfError) throw epfError;
+      if (etfError) throw etfError;
+
+      // Save report record
+      const { data: reportRecord, error: reportError } = await supabase
+        .from('reports')
+        .insert({
+          name: `EPF/ETF Report - ${reportPeriod[0].format('MMM D, YYYY')} to ${reportPeriod[1].format('MMM D, YYYY')}`,
+          type: 'epf_etf',
+          format: format,
+          created_by: currentUser?.id,
+          status: 'completed',
+          config: {
+            period: { start: startDate, end: endDate },
+            epfRecords: epfData.length,
+            etfRecords: etfData.length,
+            totalEPF: reportData.totalEPF,
+            totalETF: reportData.totalETF
+          }
+        })
+        .select();
+
+      if (reportError) throw reportError;
+
+      // Log operation
+      await supabase
+        .from('accountant_operations')
+        .insert({
+          operation: 'GENERATE_EPF_REPORT',
+          record_id: reportRecord[0].reportid,
+          accountant_id: currentUser?.id,
+          details: `Generated EPF/ETF report (${format}) for period ${startDate} to ${endDate}`,
+          operation_time: new Date().toISOString()
+        });
+
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      message.success(`EPF/ETF report (${format.toUpperCase()}) generated successfully!`);
       
     } catch (error) {
+      console.error('Error generating EPF report:', error);
       message.error('Failed to generate report');
     } finally {
       setLoading(false);
@@ -94,23 +290,67 @@ const AccountantReport = ({ dateRange }) => {
     setLoading(true);
     setActiveReport('loan');
     try {
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      const reportData = {
-        period: `${dateRange[0].format('MMM D, YYYY')} - ${dateRange[1].format('MMM D, YYYY')}`,
-        totalLoans: 12,
-        totalAmount: 150000,
-        pending: 5,
-        approved: 6,
-        rejected: 1
-      };
+      const startDate = reportPeriod[0].format('YYYY-MM-DD');
+      const endDate = reportPeriod[1].format('YYYY-MM-DD');
 
-      message.success(`Loan report (${format === 'docx' ? 'DOCX' : 'Excel'}) generated successfully!`);
-      
-      const filename = `loan-report-${dayjs().format('YYYY-MM-DD')}.${format === 'docx' ? 'docx' : 'xlsx'}`;
-      console.log('Downloading:', filename, reportData);
+      // Fetch loan data
+      const { data, error } = await supabase
+        .from('loanrequest')
+        .select(`
+          loanrequestid,
+          empid,
+          amount,
+          duration,
+          interestrate,
+          date,
+          status,
+          processedat,
+          employee:employee(full_name, department),
+          loantype:loantype(loantype)
+        `)
+        .gte('date', startDate)
+        .lte('date', endDate)
+        .order('date', { ascending: false });
+
+      if (error) throw error;
+
+      // Save report record
+      const { data: reportRecord, error: reportError } = await supabase
+        .from('reports')
+        .insert({
+          name: `Loan Report - ${reportPeriod[0].format('MMM D, YYYY')} to ${reportPeriod[1].format('MMM D, YYYY')}`,
+          type: 'loan',
+          format: format,
+          created_by: currentUser?.id,
+          status: 'completed',
+          config: {
+            period: { start: startDate, end: endDate },
+            totalLoans: data.length,
+            pendingLoans: data.filter(loan => loan.status === 'pending').length,
+            approvedLoans: data.filter(loan => loan.status === 'approved').length,
+            totalAmount: data.reduce((sum, loan) => sum + (loan.amount || 0), 0)
+          }
+        })
+        .select();
+
+      if (reportError) throw reportError;
+
+      // Log operation
+      await supabase
+        .from('accountant_operations')
+        .insert({
+          operation: 'GENERATE_LOAN_REPORT',
+          record_id: reportRecord[0].reportid,
+          accountant_id: currentUser?.id,
+          details: `Generated loan report (${format}) for period ${startDate} to ${endDate}`,
+          operation_time: new Date().toISOString()
+        });
+
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      message.success(`Loan report (${format.toUpperCase()}) generated successfully!`);
       
     } catch (error) {
+      console.error('Error generating loan report:', error);
       message.error('Failed to generate report');
     } finally {
       setLoading(false);
@@ -122,24 +362,43 @@ const AccountantReport = ({ dateRange }) => {
     setLoading(true);
     setActiveReport('financial');
     try {
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      const reportData = {
-        period: `${dateRange[0].format('MMM D, YYYY')} - ${dateRange[1].format('MMM D, YYYY')}`,
-        totalSalary: 285000,
-        totalEPF: 57000,
-        totalETF: 8550,
-        totalBonus: 25000,
-        totalOT: 12500,
-        totalLaborCost: 388050
-      };
+      const startDate = reportPeriod[0].format('YYYY-MM-DD');
+      const endDate = reportPeriod[1].format('YYYY-MM-DD');
 
-      message.success(`Financial summary (${format === 'docx' ? 'DOCX' : 'Excel'}) generated successfully!`);
-      
-      const filename = `financial-summary-${dayjs().format('YYYY-MM-DD')}.${format === 'docx' ? 'docx' : 'xlsx'}`;
-      console.log('Downloading:', filename, reportData);
+      // Save report record
+      const { data: reportRecord, error: reportError } = await supabase
+        .from('reports')
+        .insert({
+          name: `Financial Summary - ${reportPeriod[0].format('MMM D, YYYY')} to ${reportPeriod[1].format('MMM D, YYYY')}`,
+          type: 'financial_summary',
+          format: format,
+          created_by: currentUser?.id,
+          status: 'completed',
+          config: {
+            period: { start: startDate, end: endDate },
+            summary: reportData
+          }
+        })
+        .select();
+
+      if (reportError) throw reportError;
+
+      // Log operation
+      await supabase
+        .from('accountant_operations')
+        .insert({
+          operation: 'GENERATE_FINANCIAL_REPORT',
+          record_id: reportRecord[0].reportid,
+          accountant_id: currentUser?.id,
+          details: `Generated financial summary (${format}) for period ${startDate} to ${endDate}`,
+          operation_time: new Date().toISOString()
+        });
+
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      message.success(`Financial summary (${format.toUpperCase()}) generated successfully!`);
       
     } catch (error) {
+      console.error('Error generating financial summary:', error);
       message.error('Failed to generate report');
     } finally {
       setLoading(false);
@@ -196,13 +455,24 @@ const AccountantReport = ({ dateRange }) => {
           border: 'none'
         }}
       >
-        <Row>
-          <Col span={24}>
+        <Row gutter={[16, 16]} align="middle">
+          <Col xs={24} md={12}>
             <Space direction="vertical" style={{ width: '100%' }}>
               <h2 style={{ color: '#fff', margin: 0 }}>Report Period</h2>
               <p style={{ color: '#fff', margin: 0, opacity: 0.9 }}>
-                {dateRange[0].format('MMMM D, YYYY')} - {dateRange[1].format('MMMM D, YYYY')}
+                {reportPeriod[0].format('MMMM D, YYYY')} - {reportPeriod[1].format('MMMM D, YYYY')}
               </p>
+            </Space>
+          </Col>
+          <Col xs={24} md={12}>
+            <Space direction="vertical" style={{ width: '100%' }}>
+              <div style={{ color: '#fff', marginBottom: 8 }}>Select Period</div>
+              <RangePicker
+                value={reportPeriod}
+                onChange={setReportPeriod}
+                style={{ width: '100%' }}
+                format="YYYY-MM-DD"
+              />
             </Space>
           </Col>
         </Row>
@@ -285,19 +555,19 @@ const AccountantReport = ({ dateRange }) => {
       >
         <Descriptions bordered column={2}>
           <Descriptions.Item label="Total Payroll">
-            $285,000
+            ${reportData.totalSalary?.toLocaleString()}
           </Descriptions.Item>
           <Descriptions.Item label="Total EPF/ETF">
-            $65,550
+            ${(reportData.totalEPF + reportData.totalETF)?.toLocaleString()}
           </Descriptions.Item>
           <Descriptions.Item label="Active Employees">
-            45
+            {reportData.employeeCount}
           </Descriptions.Item>
           <Descriptions.Item label="Pending Loans">
-            5
+            {reportData.pendingLoans}
           </Descriptions.Item>
           <Descriptions.Item label="Report Period">
-            {dateRange[0].format('MMM D, YYYY')} to {dateRange[1].format('MMM D, YYYY')}
+            {reportPeriod[0].format('MMM D, YYYY')} to {reportPeriod[1].format('MMM D, YYYY')}
           </Descriptions.Item>
           <Descriptions.Item label="Generated On">
             {dayjs().format('MMMM D, YYYY HH:mm')}
@@ -308,7 +578,7 @@ const AccountantReport = ({ dateRange }) => {
           <Col xs={24} sm={12} md={6}>
             <Statistic
               title="Total Labor Cost"
-              value={388050}
+              value={reportData.totalLaborCost}
               prefix="$"
               valueStyle={{ color: '#1890ff' }}
             />
@@ -316,7 +586,7 @@ const AccountantReport = ({ dateRange }) => {
           <Col xs={24} sm={12} md={6}>
             <Statistic
               title="Average Salary"
-              value={6333}
+              value={reportData.avgSalary}
               prefix="$"
               valueStyle={{ color: '#52c41a' }}
             />
@@ -324,7 +594,7 @@ const AccountantReport = ({ dateRange }) => {
           <Col xs={24} sm={12} md={6}>
             <Statistic
               title="Total Bonus"
-              value={25000}
+              value={reportData.totalBonus}
               prefix="$"
               valueStyle={{ color: '#722ed1' }}
             />
@@ -332,7 +602,7 @@ const AccountantReport = ({ dateRange }) => {
           <Col xs={24} sm={12} md={6}>
             <Statistic
               title="Total OT"
-              value={12500}
+              value={reportData.totalOT}
               prefix="$"
               valueStyle={{ color: '#fa8c16' }}
             />

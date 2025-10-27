@@ -9,12 +9,12 @@ import ForgotPassword from "./components/Auth/ForgotPassword";
 import ResetPassword from "./components/Auth/ResetPassword";
 
 // Dashboards
-import AdminDashboard from "./components/Dashboard/AdminDashboard";
-import HRDashboard from "./components/Dashboard/HRDashboard";
-import ManagerDashboard from "./components/Dashboard/ManagerDashboard";
+import AdminDashboard from "./components/Dashboard/Admin/AdminDashboard";
+import HRDashboard from "./components/Dashboard/HR/HRDashboard";
+import ManagerDashboard from "./components/Dashboard/Manager/ManagerDashboard";
 import AccountantDashboard from "./components/Dashboard/Accountant/AccountantDashboard";
-import CEODashboard from "./components/Dashboard/CEODashboard";
-import EmployeeDashboard from "./components/Dashboard/EmployeeDashboard";
+import CEODashboard from "./components/Dashboard/CEO/CEODashboard";
+import EmployeeDashboard from "./components/Dashboard/Employee/EmployeeDashboard";
 
 // Layout
 import DashboardLayout from "./components/Layout/DashboardLayout";
@@ -26,6 +26,32 @@ import AccountantLoan from "./components/Dashboard/Accountant/AccountantLoan";
 import AccountantPayRoll from "./components/Dashboard/Accountant/AccountantPayRol";
 import AccountantReport from "./components/Dashboard/Accountant/AccountantReport";
 import AccountantSalary from "./components/Dashboard/Accountant/AccountantSalary";
+
+//Admin Component
+import AdminEmployee from "./components/Dashboard/Admin/AdminEmployee";
+import AdminPayment from "./components/Dashboard/Admin/AdminPayment";
+import AdminReport from "./components/Dashboard/Admin/AdminReports";
+
+//CEO Component
+import CEOEmployee from "./components/Dashboard/CEO/CEOEmployee";
+import CEOPayment from "./components/Dashboard/CEO/CEOPayment";
+import CEOReport from "./components/Dashboard/CEO/CEOReports";
+
+//Employee Component
+import EmployeeLeaves from "./components/Dashboard/Employee/EmployeeEmployee";
+import EmployeePayments from "./components/Dashboard/Employee/EmployeePayment";
+import EmployeeReports from "./components/Dashboard/Employee/EmployeeReports";
+
+//HR Component
+import HREmployee from "./components/Dashboard/HR/HREmployee"
+import HRPayments from "./components/Dashboard/HR/HRPayment";
+import HRReports from "./components/Dashboard/HR/HRReport";
+
+//Manager Component
+
+import ManagerReports from "./components/Dashboard/Manager/ManagerReport";
+import ManagerTasks from "./components/Dashboard/Manager/ManagerPayment";
+import ManagerTeam from "./components/Dashboard/Manager/ManagerEmployee";
 
 function App() {
   return (
@@ -96,6 +122,116 @@ function App() {
           {/* ---------- DEFAULT REDIRECTS ---------- */}
           <Route path="/" element={<Navigate to="/login" replace />} />
           <Route path="*" element={<Navigate to="/login" replace />} />
+
+          {/* ---------- ADMIN REDIRECTS ---------- */}
+          <Route path="/admin/employee" element={
+            <DashboardLayout>
+              <AdminEmployee>
+              </AdminEmployee>
+            </DashboardLayout>
+          } />
+
+          <Route path="/admin/payement" element={
+            <DashboardLayout>
+              <AdminPayment>
+              </AdminPayment>
+            </DashboardLayout>
+          } />
+
+          <Route path="/admin/reports" element={
+            <DashboardLayout>
+              <AdminReport>
+              </AdminReport>
+            </DashboardLayout>
+          } />
+
+          {/* ---------- EMPLOYEE REDIRECTS ---------- */}
+          <Route path="/employee/employee" element={
+            <DashboardLayout>
+              <EmployeeLeaves>
+              </EmployeeLeaves>
+            </DashboardLayout>
+          } />
+
+          <Route path="/employee/payement" element={
+            <DashboardLayout>
+              <EmployeePayments>
+              </EmployeePayments>
+            </DashboardLayout>
+          } />
+
+          <Route path="/employee/reports" element={
+            <DashboardLayout>
+              <EmployeeReports>
+              </EmployeeReports>
+            </DashboardLayout>
+          } />
+
+          {/* ---------- CEO REDIRECTS ---------- */}
+          <Route path="/ceo/employee" element={
+            <DashboardLayout>
+              <CEOEmployee>
+              </CEOEmployee>
+            </DashboardLayout>
+          } />
+
+          <Route path="/ceo/payement" element={
+            <DashboardLayout>
+              <CEOPayment>
+              </CEOPayment>
+            </DashboardLayout>
+          } />
+
+          <Route path="/ceo/reports" element={
+            <DashboardLayout>
+              <CEOReport>
+              </CEOReport>
+            </DashboardLayout>
+          } />
+
+          {/* ---------- HR REDIRECTS ---------- */}
+          <Route path="/hr/employee" element={
+            <DashboardLayout>
+              <HREmployee>
+              </HREmployee>
+            </DashboardLayout>
+          } />
+
+          <Route path="/hr/payement" element={
+            <DashboardLayout>
+              <HRPayments>
+              </HRPayments>
+            </DashboardLayout>
+          } />
+
+          <Route path="/hr/reports" element={
+            <DashboardLayout>
+              <HRReports>
+              </HRReports>
+            </DashboardLayout>
+          } />
+
+          {/* ---------- MANAGER REDIRECTS ---------- */}
+          <Route path="/manager/employee" element={
+            <DashboardLayout>
+              <ManagerTeam>
+              </ManagerTeam>
+            </DashboardLayout>
+          } />
+
+          <Route path="/manager/tasks" element={
+            <DashboardLayout>
+              <ManagerTasks>
+              </ManagerTasks>
+            </DashboardLayout>
+          } />
+
+          <Route path="/manager/reports" element={
+            <DashboardLayout>
+              <ManagerReports>
+              </ManagerReports>
+            </DashboardLayout>
+          } />
 
           {/* ---------- ACCOUNTANT REDIRECTS ---------- */}
           <Route path="/accountant/epf-etf" element={
